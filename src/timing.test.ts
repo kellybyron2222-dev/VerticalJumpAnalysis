@@ -197,8 +197,10 @@ describe("estimateBoxHeight", () => {
   });
 
   it("uses IMG_0227 timestamps instead of a fixed fps", () => {
-    // Frames read off the clip: last frame on the ~6 in box, first frame on
-    // the floor, takeoff, and landing. Times are that file's presentation clock.
+    // Frames read off the clip: last frame on the ~6 in box (1.04s), first frame
+    // on the floor (1.24s), last frame still down (1.81s), landing (2.19s).
+    // Feet are still flat at 1.80s and clear by 1.84s, so the ~567 ms contact
+    // is the deep squat, not a touchdown or takeoff sitting on the wrong frame.
     const times = IMG_0227_FRAME_TIMES;
     const stepOff = 45;
     const touchdown = 52;

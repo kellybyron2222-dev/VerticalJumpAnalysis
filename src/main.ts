@@ -17,7 +17,8 @@ import {
   formatRsi,
 } from "./format.ts";
 import { trialFormError } from "./form.ts";
-import { collectFrameTimes } from "./cadence.ts";
+import { collectFrameTimes, transportEnabledAfterClockRead } from "./cadence.ts";
+import { parseMovFrameTimes } from "./mov.ts";
 import { analyzeClip } from "./pose.ts";
 import { previewMetrics, realSecondsOnClock } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
@@ -89,8 +90,11 @@ let detecting: AbortController | null = null;
 let factor = readFactor();
 let boxAutoFilled = false;
 let measuring = false;
+let loadGeneration = 0;
 let measuredUrl: string | null = null;
 let frameTimes: number[] | null = null;
+/** Timestamps parsed from the file. Playback sampling is only the fallback. */
+let clockRead: Promise<number[] | null> = Promise.resolve(null);
 
 cadenceButton.addEventListener("click", () => {
   void detectCadence();
@@ -238,11 +242,18 @@ function closeMenu(): void {
 function loadFile(file: File): void {
   detecting?.abort();
   detecting = null;
+  loadGeneration += 1;
+  measuring = false;
   fpsInput.disabled = false;
   cancelDetect.hidden = true;
   detectStatus.textContent = "";
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
+  const generation = loadGeneration;
+  clockRead = file
+    .arrayBuffer()
+    .then((buffer) => parseMovFrameTimes(new Uint8Array(buffer)))
+    .catch(() => null);
   ready = false;
   frame = 0;
   marks.stepOff = null;
@@ -252,6 +263,10 @@ function loadFile(file: File): void {
   measuredUrl = null;
   frameTimes = null;
   seeker.setClock(null);
+  void clockRead.then((times) => {
+    if (generation !== loadGeneration || !times) return;
+    applyFrameClock(times);
+  });
   cadenceStatus.textContent = "";
   clipName.textContent = file.name;
   emptyVideo.hidden = true;
@@ -299,34 +314,55 @@ function onReady(): void {
   }
 }
 
-/** Plays the clip once and keeps each frame's presentation time. */
+function applyFrameClock(times: readonly number[]): void {
+  frameTimes = [...times];
+  seeker.setClock(frameTimes);
+  const fps = measuredFps(frameTimes);
+  if (fps) fpsInput.value = fps.toFixed(1);
+  const variable = isVariableRate(frameTimes);
+  cadenceStatus.textContent = variable
+    ? `Variable frame rate, average ${fps ? fps.toFixed(0) : "—"} fps over ${frameTimes.length} frames. Photos may show that average (this clip has been read as 171). Times use each frame's timestamp, not that number.`
+    : `Measured ${fps ? fps.toFixed(0) : "—"} fps from ${frameTimes.length} frame timestamps. Contact, flight, and the box use those times.`;
+  if (ready) {
+    const count = seeker.frameCount;
+    scrubber.max = String(Math.max(0, count - 1));
+    frame = clampFrame(frame, count);
+    render();
+  }
+}
+
+/**
+ * Reads the file's composition timestamps. Playback sampling runs only when
+ * the file has no sample table. Either way the controls come back: a hung
+ * `play()` or a missing clock must not leave auto-detect disabled.
+ */
 async function detectCadence(): Promise<void> {
   if (!ready || measuring || detecting) return;
   const url = objectUrl;
+  const generation = loadGeneration;
   measuring = true;
   setTransportEnabled(false);
   cadenceStatus.textContent = "Reading each frame's timestamp…";
   try {
-    const times = await collectFrameTimes(video);
-    if (url !== objectUrl) return;
+    let times = await clockRead;
+    if (generation !== loadGeneration || url !== objectUrl) return;
+    if (!times) times = await collectFrameTimes(video);
+    if (generation !== loadGeneration || url !== objectUrl) return;
     if (!times) {
+      frameTimes = null;
+      seeker.setClock(null);
       cadenceStatus.textContent =
-        "Could not read frame timestamps. Times would be wrong on a variable-rate slo-mo clip.";
+        "Could not read frame timestamps. Auto-detect still runs; times fall back to the frame-rate field.";
       return;
     }
-    frameTimes = times;
-    seeker.setClock(times);
-    const fps = measuredFps(times);
-    if (fps) fpsInput.value = fps.toFixed(1);
-    const variable = isVariableRate(times);
-    cadenceStatus.textContent = variable
-      ? `Variable frame rate, average ${fps ? fps.toFixed(0) : "—"} fps over ${times.length} frames. Photos may show that average (this clip has been read as 171). Times use each frame's timestamp, not that number.`
-      : `Measured ${fps ? fps.toFixed(0) : "—"} fps from ${times.length} frame timestamps. Contact, flight, and the box use those times.`;
+    applyFrameClock(times);
   } finally {
+    if (generation !== loadGeneration) return;
     measuring = false;
+    video.pause();
     if (ready && url === objectUrl) {
-      setTransportEnabled(frameTimes !== null);
-      if (frameTimes) setFrame(frame);
+      setTransportEnabled(transportEnabledAfterClockRead(seeker.frameCount));
+      setFrame(frame);
     }
   }
 }

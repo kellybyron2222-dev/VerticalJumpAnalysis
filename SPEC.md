@@ -14,9 +14,9 @@ Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" bel
 
 iPhone slo-mo clips picked from the camera roll often arrive stretched in time: a 240 fps capture plays at 30 fps, so media time runs 8× slower than real time. Durations read from `currentTime` are then inflated (8× GCT and flight, 64× height, 8× RSI).
 
-- One conversion for every metric and the clock: the difference of the two frames' presentation timestamps (`requestVideoFrameCallback` `mediaTime`). iPhone slo-mo is variable-rate (slowed middle, faster ramps at the ends). Photos may show one number such as 171 fps; that is an average, not a divisor. When the gaps vary, that average is shown and then not used. A free-fall time outside about 0.11–0.45 s is flagged.
+- One conversion for every metric and the clock: the difference of the two frames' presentation timestamps. Those come from the file's composition times (`stts` / `ctts` / edit list), which match `currentTime`. iPhone slo-mo is variable-rate. Photos may show one number such as 171 fps; that is an average, not a divisor. When the gaps vary, that average is shown and then not used. A free-fall time outside about 0.11–0.45 s is flagged and does not block auto-detect.
 - The stretch chips (1×, 2×, 4×, 8×) stay at 1 unless Byron taps one. They do not move marks.
-- On load the clip plays muted at 0.5× and the app records each frame's `mediaTime`. A Detect button re-runs it.
+- On load the app reads the file's sample table and does not play the clip to discover timestamps. `requestVideoFrameCallback` is only a fallback, and a hung or empty read leaves stepping and auto-detect enabled. A fallback `mediaTime` that sits past the played duration is shifted onto that duration.
 - Sanity warning when jump height is over 40 in or under 2 in, contact time is outside 80–1000 ms, or the jump height and the box-height estimate disagree (jump more than 6× the box estimate, or the box estimate more than 8× the jump). A ramp stretches the drop and the flight by different amounts, so those two heights stop matching.
 
 ## Box height from video

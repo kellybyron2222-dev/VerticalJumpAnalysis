@@ -51,6 +51,26 @@ export function frameClockFromTicks(ticks: readonly FrameTick[]): number[] | nul
   return times.length >= 3 ? times : null;
 }
 
+/**
+ * Safari can report `mediaTime` in the media timescale, including the pre-edit
+ * offset, so the stamps sit past `duration` and every seek clamps to the last
+ * frame. Shift that clock onto the played duration. Differences are unchanged,
+ * which is what the metrics use. Stamps already inside the duration stay put.
+ */
+export function alignClockToDuration(times: readonly number[], duration: number): number[] | null {
+  const clock = frameClockFromTicks(times.map((mediaTime, presentedFrames) => ({ mediaTime, presentedFrames })));
+  if (!clock) return null;
+  if (!(duration > 0)) return clock;
+  const first = clock[0];
+  const last = clock[clock.length - 1];
+  if (first >= -0.02 && last <= duration + 0.05) return clock;
+  const span = last - first;
+  if (first > 0.05 && span > 0 && span <= duration * 1.25) {
+    return clock.map((time) => Math.round((time - first) * 1e6) / 1e6);
+  }
+  return clock;
+}
+
 /** One `requestVideoFrameCallback` reading while the clip plays. */
 export interface FrameTick {
   mediaTime: number;
