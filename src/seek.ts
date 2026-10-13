@@ -1,0 +1,117 @@
+export interface SeekTarget {
+  currentTime: number;
+  duration: number;
+  readyState: number;
+  pause(): void;
+  addEventListener(type: "seeked", listener: () => void): void;
+  removeEventListener(type: "seeked", listener: () => void): void;
+}
+
+export function frameCountFor(durationSeconds: number, fps: number): number {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) return 0;
+  if (!Number.isFinite(fps) || fps <= 0) return 0;
+  return Math.max(1, Math.round(durationSeconds * fps));
+}
+
+export function clampFrame(frame: number, frameCount: number): number {
+  if (frameCount <= 0) return 0;
+  const rounded = Math.round(frame);
+  return Math.min(frameCount - 1, Math.max(0, rounded));
+}
+
+/**
+ * Media time that should display `frame`.
+ * A nudge past the frame boundary keeps decoders that snap backward
+ * (common on iOS) on this frame instead of the previous one.
+ * The time stays inside the frame and inside the media duration.
+ */
+export function frameSeekTime(frame: number, fps: number, durationSeconds: number): number {
+  if (!Number.isFinite(fps) || fps <= 0) return 0;
+  const frameDuration = 1 / fps;
+  const nudge = frameDuration * 0.15;
+  let time = frame * frameDuration + nudge;
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    const maxTime = Math.max(0, durationSeconds - frameDuration * 0.05);
+    time = Math.min(time, maxTime);
+  }
+  return Math.max(0, time);
+}
+
+/**
+ * Serializes seeks and keeps only the newest request.
+ * iOS Safari drops currentTime writes that overlap, and it may not fire
+ * `seeked` when the time did not change, so each step waits for `seeked`
+ * (or a timeout) and identical times resolve immediately.
+ */
+export class FrameSeeker {
+  private queued: number | null = null;
+  private running = false;
+  private readonly media: SeekTarget;
+  private fps: number;
+  private readonly seekTimeoutMs: number;
+
+  constructor(media: SeekTarget, fps: number, seekTimeoutMs = 700) {
+    this.media = media;
+    this.fps = fps;
+    this.seekTimeoutMs = seekTimeoutMs;
+  }
+
+  setFps(fps: number): void {
+    this.fps = fps;
+  }
+
+  get frameCount(): number {
+    return frameCountFor(this.media.duration, this.fps);
+  }
+
+  request(frame: number): void {
+    if (!Number.isFinite(this.fps) || this.fps <= 0) return;
+    const count = this.frameCount;
+    if (count <= 0) return;
+    this.queued = clampFrame(frame, count);
+    void this.drain();
+  }
+
+  private async drain(): Promise<void> {
+    if (this.running) return;
+    this.running = true;
+    try {
+      while (this.queued !== null) {
+        const frame = this.queued;
+        this.queued = null;
+        await this.seekOnce(frame);
+      }
+    } finally {
+      this.running = false;
+      if (this.queued !== null) void this.drain();
+    }
+  }
+
+  private seekOnce(frame: number): Promise<void> {
+    const media = this.media;
+    const time = frameSeekTime(frame, this.fps, media.duration);
+    if (media.readyState >= 2 && Math.abs(media.currentTime - time) < 1e-4) {
+      return Promise.resolve();
+    }
+
+    media.pause();
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        media.removeEventListener("seeked", finish);
+        resolve();
+      };
+      media.addEventListener("seeked", finish);
+      try {
+        media.currentTime = time;
+      } catch {
+        finish();
+        return;
+      }
+      setTimeout(finish, this.seekTimeoutMs);
+    });
+  }
+}

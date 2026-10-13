@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f3f0e7" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta
+      name="description"
+      content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Jump Lab</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="top">
+        <div>
+          <p class="eyebrow">Byron</p>
+          <h1>Jump Lab</h1>
+        </div>
+        <div class="menu">
+          <button
+            type="button"
+            id="menu-button"
+            class="button-ghost"
+            aria-expanded="false"
+            aria-controls="menu-panel"
+          >
+            Menu
+          </button>
+          <div id="menu-panel" role="menu" hidden>
+            <button type="button" id="open-guide" role="menuitem">Camera setup</button>
+          </div>
+        </div>
+      </header>
+
+      <section id="guide" class="guide" aria-labelledby="guide-title">
+        <h2 id="guide-title">Camera setup</h2>
+        <p class="lede">
+          Get the phone right before you record. Marking the jump starts after you close this.
+        </p>
+        <ol>
+          <li>
+            <h3>Side-on</h3>
+            <p>Sagittal view. The camera looks across the jump, not from the front.</p>
+          </li>
+          <li>
+            <h3>Tripod height</h3>
+            <p>About hip height, or level with the top of the box.</p>
+          </li>
+          <li>
+            <h3>Distance</h3>
+            <p>About 3–4 m away.</p>
+          </li>
+          <li>
+            <h3>Square to the plane</h3>
+            <p>Lens perpendicular to the plane of the jump.</p>
+          </li>
+          <li>
+            <h3>1× lens</h3>
+            <p>No digital zoom.</p>
+          </li>
+          <li>
+            <h3>Full frame</h3>
+            <p>Whole body, the box, and the landing area stay in frame.</p>
+          </li>
+          <li>
+            <h3>Light</h3>
+            <p>Bright and even. Avoid shooting into a window.</p>
+          </li>
+          <li>
+            <h3>240 fps</h3>
+            <p>iPhone slo-mo. The trial frame rate starts at 240.</p>
+          </li>
+        </ol>
+        <button type="button" id="dismiss-guide" class="button-primary">Start a trial</button>
+      </section>
+
+      <section id="analyze" hidden>
+        <p class="privacy">The clip stays on this phone. A saved trial stores frames and numbers only.</p>
+
+        <div id="empty-video" class="empty">
+          <h2>Load a slo-mo clip</h2>
+          <p>Pick a side-on jump from the camera roll.</p>
+          <label class="button-primary file-button" for="video-input">Choose video</label>
+        </div>
+
+        <div id="player" hidden>
+          <p id="clip-name" class="clip-name"></p>
+          <div class="stage">
+            <video
+              id="video"
+              playsinline
+              webkit-playsinline
+              muted
+              preload="auto"
+              disablepictureinpicture
+            ></video>
+            <p id="video-status" class="video-status">Reading video…</p>
+          </div>
+
+          <p class="frame-readout">
+            <span id="frame-label">0</span>
+            <span class="frame-of">/ <span id="total-label">0</span></span>
+          </p>
+          <p id="time-label" class="time-readout">0.000 s</p>
+
+          <label class="field" for="fps">
+            Frames per second
+            <input id="fps" type="number" inputmode="numeric" min="1" step="1" value="240" />
+          </label>
+
+          <div class="transport" role="group" aria-label="Frame step">
+            <button type="button" id="step-back-10" data-step="-10" disabled>−10</button>
+            <button type="button" id="step-back-1" data-step="-1" disabled>−1</button>
+            <button type="button" id="step-fwd-1" data-step="1" disabled>+1</button>
+            <button type="button" id="step-fwd-10" data-step="10" disabled>+10</button>
+          </div>
+
+          <label class="scrub" for="scrubber">
+            <span>Scrub</span>
+            <input id="scrubber" type="range" min="0" max="0" value="0" disabled />
+          </label>
+
+          <div id="timeline" class="timeline" aria-hidden="true">
+            <span id="mark-td" class="pip td" hidden></span>
+            <span id="mark-to" class="pip to" hidden></span>
+            <span id="mark-ld" class="pip ld" hidden></span>
+            <span id="playhead" class="playhead"></span>
+          </div>
+
+          <div class="marks">
+            <article class="mark" data-event="touchdown">
+              <div>
+                <h3>Touchdown</h3>
+                <p id="td-frame">Not set</p>
+              </div>
+              <div class="mark-actions">
+                <button type="button" id="set-td">Set</button>
+                <button type="button" id="goto-td" disabled>Go to</button>
+                <button type="button" id="clear-td" class="text-button" disabled>Clear</button>
+              </div>
+            </article>
+            <article class="mark" data-event="takeoff">
+              <div>
+                <h3>Takeoff</h3>
+                <p id="to-frame">Not set</p>
+              </div>
+              <div class="mark-actions">
+                <button type="button" id="set-to">Set</button>
+                <button type="button" id="goto-to" disabled>Go to</button>
+                <button type="button" id="clear-to" class="text-button" disabled>Clear</button>
+              </div>
+            </article>
+            <article class="mark" data-event="landing">
+              <div>
+                <h3>Landing</h3>
+                <p id="ld-frame">Not set</p>
+              </div>
+              <div class="mark-actions">
+                <button type="button" id="set-ld">Set</button>
+                <button type="button" id="goto-ld" disabled>Go to</button>
+                <button type="button" id="clear-ld" class="text-button" disabled>Clear</button>
+              </div>
+            </article>
+          </div>
+
+          <form id="trial-form">
+            <fieldset>
+              <legend>Jump type</legend>
+              <div class="segment" role="radiogroup" aria-label="Jump type">
+                <label>
+                  <input type="radio" name="jumpType" value="drop" />
+                  <span>Drop jump</span>
+                </label>
+                <label>
+                  <input type="radio" name="jumpType" value="depth" />
+                  <span>Depth jump</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <label class="field" for="box-height">
+              Box height (in)
+              <input
+                id="box-height"
+                type="number"
+                inputmode="decimal"
+                min="0"
+                step="0.5"
+                placeholder="12"
+              />
+            </label>
+            <div class="chips" id="box-chips">
+              <button type="button" data-height="6">6</button>
+              <button type="button" data-height="12">12</button>
+              <button type="button" data-height="18">18</button>
+              <button type="button" data-height="24">24</button>
+              <button type="button" data-height="30">30</button>
+            </div>
+
+            <fieldset>
+              <legend>Arm swing</legend>
+              <div class="segment" role="radiogroup" aria-label="Arm swing">
+                <label>
+                  <input type="radio" name="armSwing" value="yes" />
+                  <span>Yes</span>
+                </label>
+                <label>
+                  <input type="radio" name="armSwing" value="no" />
+                  <span>No</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <label class="field" for="notes">
+              Notes
+              <textarea id="notes" rows="2" maxlength="500" placeholder="Optional"></textarea>
+            </label>
+          </form>
+
+          <section class="metrics" aria-live="polite">
+            <div class="metrics-head">
+              <h2>Provisional</h2>
+              <p id="metrics-hint">Mark touchdown, takeoff, and landing.</p>
+            </div>
+            <dl id="metrics-values" hidden>
+              <div>
+                <dt>GCT</dt>
+                <dd id="m-gct">—</dd>
+              </div>
+              <div>
+                <dt>Flight</dt>
+                <dd id="m-ft">—</dd>
+              </div>
+              <div>
+                <dt>Height</dt>
+                <dd id="m-height">—</dd>
+                <dd id="m-height-cm" class="sub">—</dd>
+              </div>
+              <div>
+                <dt>RSI</dt>
+                <dd id="m-rsi">—</dd>
+              </div>
+            </dl>
+          </section>
+
+          <p id="form-error" class="form-error" role="alert" hidden></p>
+          <button type="button" id="save-trial" class="button-primary">Save trial</button>
+          <p id="save-status" class="save-status" role="status"></p>
+
+          <label class="button-secondary file-button" for="video-input">Replace video</label>
+        </div>
+
+        <section class="saved" aria-labelledby="saved-title">
+          <h2 id="saved-title">Saved on this phone <span id="saved-count">0</span></h2>
+          <p id="saved-empty">No trials saved on this phone yet.</p>
+          <ul id="trial-list"></ul>
+        </section>
+      </section>
+    </div>
+
+    <input id="video-input" class="visually-hidden" type="file" accept="video/*" />
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

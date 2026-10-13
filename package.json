@@ -1,0 +1,22 @@
+{
+  "name": "jump-lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 4731",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4731",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/barlow-condensed": "^5.2.8",
+    "@fontsource/outfit": "^5.2.8"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^4.0.0"
+  }
+}
