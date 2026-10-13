@@ -5,12 +5,34 @@ export { realSecondsBetween, realSecondsFromMedia, realSecondsOnClock } from "./
 /** Playback factors offered in the UI. 8× is a 240 fps clip stretched to play at 30 fps. */
 export const SLOW_MO_FACTORS = [1, 2, 4, 8] as const;
 
-/** Average frames per second across a measured presentation clock. */
+/** Average frames per second across a measured presentation clock. Not a timebase. */
 export function measuredFps(times: readonly number[]): number | null {
   if (times.length < 2) return null;
   const span = times[times.length - 1] - times[0];
   if (!(span > 0)) return null;
   return (times.length - 1) / span;
+}
+
+/** Shortest and longest gap. Photos' single fps is this average, which hides the ramps. */
+export function frameGapRange(times: readonly number[]): { shortest: number; longest: number } | null {
+  if (times.length < 3) return null;
+  let shortest = Number.POSITIVE_INFINITY;
+  let longest = 0;
+  for (let i = 1; i < times.length; i += 1) {
+    const gap = times[i] - times[i - 1];
+    if (!(gap > 0)) continue;
+    if (gap < shortest) shortest = gap;
+    if (gap > longest) longest = gap;
+  }
+  if (!Number.isFinite(shortest) || !(longest > 0)) return null;
+  return { shortest, longest };
+}
+
+/** True when the clip is not one rate — a slowed middle and faster ends, or a 1/60 and 1/30 mix. */
+export function isVariableRate(times: readonly number[]): boolean {
+  const range = frameGapRange(times);
+  if (!range) return false;
+  return range.longest > range.shortest * 1.4;
 }
 
 /**
@@ -112,6 +134,8 @@ export function sanityWarnings(input: {
   heightIn: number | null;
   gctMs: number | null;
   boxHeightIn?: number | null;
+  /** Free-fall time from the frame timestamps, in seconds. */
+  fallSeconds?: number | null;
 }): string[] {
   const warnings: string[] = [];
   if (input.heightIn !== null) {
@@ -120,6 +144,10 @@ export function sanityWarnings(input: {
   }
   if (input.gctMs !== null && (input.gctMs < 80 || input.gctMs > 1000)) {
     warnings.push("Contact time is outside 80–1000 ms.");
+  }
+  // ~2.5 in to ~40 in of free fall. A single average fps (Photos' 171) misses this.
+  if (input.fallSeconds != null && (input.fallSeconds < 0.11 || input.fallSeconds > 0.45)) {
+    warnings.push("Free-fall time does not match a real box.");
   }
   const box = input.boxHeightIn ?? null;
   if (

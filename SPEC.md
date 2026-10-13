@@ -14,7 +14,7 @@ Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" bel
 
 iPhone slo-mo clips picked from the camera roll often arrive stretched in time: a 240 fps capture plays at 30 fps, so media time runs 8× slower than real time. Durations read from `currentTime` are then inflated (8× GCT and flight, 64× height, 8× RSI).
 
-- One conversion for every metric and the clock: the difference of the two frames' presentation timestamps (`requestVideoFrameCallback` `mediaTime`), divided by an optional stretch (default 1). iPhone slo-mo files are variable-rate (a mix of about 1/60 s and 1/30 s), so frame index ÷ a fixed fps is wrong, and the container rate (often 60) is not the capture rate. The UI shows the average fps measured from those timestamps, not a guessed 60/120/240.
+- One conversion for every metric and the clock: the difference of the two frames' presentation timestamps (`requestVideoFrameCallback` `mediaTime`). iPhone slo-mo is variable-rate (slowed middle, faster ramps at the ends). Photos may show one number such as 171 fps; that is an average, not a divisor. When the gaps vary, that average is shown and then not used. A free-fall time outside about 0.11–0.45 s is flagged.
 - The stretch chips (1×, 2×, 4×, 8×) stay at 1 unless Byron taps one. They do not move marks.
 - On load the clip plays muted at 0.5× and the app records each frame's `mediaTime`. A Detect button re-runs it.
 - Sanity warning when jump height is over 40 in or under 2 in, contact time is outside 80–1000 ms, or the jump height and the box-height estimate disagree (jump more than 6× the box estimate, or the box estimate more than 8× the jump). A ramp stretches the drop and the flight by different amounts, so those two heights stop matching.

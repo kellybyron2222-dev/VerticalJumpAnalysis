@@ -6,6 +6,7 @@ import {
   estimateBoxHeight,
   estimateFrameInterval,
   frameClockFromTicks,
+  isVariableRate,
   measuredFps,
   mediaFrameRate,
   realSecondsFromMedia,
@@ -232,8 +233,43 @@ describe("estimateBoxHeight", () => {
     const fps = measuredFps(times);
     expect(fps).toBeGreaterThan(30);
     expect(fps).toBeLessThan(50);
-    expect(fps).not.toBe(60);
-    expect(fps).not.toBe(240);
+    expect(isVariableRate(times)).toBe(true);
+    expect(sanityWarnings({ heightIn: jump!.heightIn, gctMs: jump!.gctMs, boxHeightIn: box!.heightIn, fallSeconds: box!.fallSeconds })).toEqual(
+      [],
+    );
+  });
+
+  it("does not time a variable-rate clip by its average fps", () => {
+    // Photos can show one number (Byron saw 171) that is only the average of a
+    // slowed middle and faster ends. The 6 in drop sits in the fast middle.
+    const times: number[] = [0];
+    const add = (count: number, dt: number) => {
+      for (let i = 0; i < count; i += 1) times.push(times[times.length - 1] + dt);
+    };
+    add(5, 1 / 30);
+    const stepOff = times.length - 1;
+    const fallFrames = 42;
+    add(fallFrames, 1 / 240);
+    const touchdown = stepOff + 1 + fallFrames;
+    add(122, 1 / 240);
+    add(5, 1 / 30);
+
+    const average = measuredFps(times)!;
+    expect(average).toBeGreaterThan(160);
+    expect(average).toBeLessThan(180);
+    expect(isVariableRate(times)).toBe(true);
+
+    const fromStamps = estimateBoxHeight(stepOff, touchdown, average, 1, times);
+    const fromAverage = (touchdown - (stepOff + 1)) / average;
+    expect(fromStamps!.fallSeconds).toBeCloseTo(fallFrames / 240, 6);
+    expect(fromStamps!.heightIn).toBeCloseTo(6, 0);
+    expect(Math.abs(fromStamps!.fallSeconds - fromAverage)).toBeGreaterThan(0.05);
+    expect(
+      sanityWarnings({ heightIn: 12, gctMs: 250, boxHeightIn: fromStamps!.heightIn, fallSeconds: fromStamps!.fallSeconds }),
+    ).toEqual([]);
+    expect(sanityWarnings({ heightIn: 12, gctMs: 250, fallSeconds: fromAverage * 4 }).some((line) => /free-fall/i.test(line))).toBe(
+      true,
+    );
   });
 
   it("rejects bad input", () => {

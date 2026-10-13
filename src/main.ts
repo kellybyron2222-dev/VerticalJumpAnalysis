@@ -21,7 +21,7 @@ import { collectFrameTimes } from "./cadence.ts";
 import { analyzeClip } from "./pose.ts";
 import { previewMetrics, realSecondsOnClock } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
-import { estimateBoxHeight, measuredFps, sanityWarnings } from "./timing.ts";
+import { estimateBoxHeight, isVariableRate, measuredFps, sanityWarnings } from "./timing.ts";
 import {
   createTrial,
   loadTrials,
@@ -318,7 +318,10 @@ async function detectCadence(): Promise<void> {
     seeker.setClock(times);
     const fps = measuredFps(times);
     if (fps) fpsInput.value = fps.toFixed(1);
-    cadenceStatus.textContent = `Measured ${fps ? fps.toFixed(0) : "—"} fps from ${times.length} frame timestamps. Contact, flight, and the box use those times.`;
+    const variable = isVariableRate(times);
+    cadenceStatus.textContent = variable
+      ? `Variable frame rate, average ${fps ? fps.toFixed(0) : "—"} fps over ${times.length} frames. Photos may show that average (this clip has been read as 171). Times use each frame's timestamp, not that number.`
+      : `Measured ${fps ? fps.toFixed(0) : "—"} fps from ${times.length} frame timestamps. Contact, flight, and the box use those times.`;
   } finally {
     measuring = false;
     if (ready && url === objectUrl) {
@@ -332,6 +335,11 @@ async function detectCadence(): Promise<void> {
  * Marks stay on the same frame. The factor only changes real-seconds conversion,
  * so tapping 2×/4×/8× does not move the picture and cannot be applied twice.
  */
+/** A variable-rate clip already has the ramps in its timestamps. One factor would undo that. */
+function activeStretch(): number {
+  return frameTimes && isVariableRate(frameTimes) ? 1 : factor;
+}
+
 function applyFactor(next: number): void {
   if (!(next >= 1) || next === factor) return;
   factor = next;
@@ -345,7 +353,7 @@ function maybePrefillBox(): void {
   const fps = readFps();
   if (fps === null || marks.stepOff === null || marks.touchdown === null) return;
   if (boxInput.value.trim() !== "" && !boxAutoFilled) return;
-  const estimate = estimateBoxHeight(marks.stepOff, marks.touchdown, fps, factor, frameTimes ?? undefined);
+  const estimate = estimateBoxHeight(marks.stepOff, marks.touchdown, fps, activeStretch(), frameTimes ?? undefined);
   if (!estimate) return;
   boxInput.value = String(Math.round(estimate.heightIn * 2) / 2);
   boxAutoFilled = true;
@@ -450,12 +458,16 @@ function render(): void {
   frameLabel.textContent = String(frame);
   totalLabel.textContent = String(count);
   const clockFps = frameTimes ? measuredFps(frameTimes) : null;
+  const variable = frameTimes ? isVariableRate(frameTimes) : false;
+  const stretch = activeStretch();
   timeLabel.textContent =
     frameTimes && frame < frameTimes.length
-      ? formatClock(realSecondsOnClock(frameTimes, 0, frame, clockFps ?? 1, factor))
+      ? formatClock(realSecondsOnClock(frameTimes, 0, frame, clockFps ?? 1, stretch))
       : "—";
   timingReadout.textContent = frameTimes
-    ? `Measured ${clockFps ? clockFps.toFixed(0) : "—"} fps · ${formatFactor(factor)}× stretch`
+    ? variable
+      ? `Variable · average ${clockFps ? clockFps.toFixed(0) : "—"} fps · timed from frame stamps`
+      : `Measured ${clockFps ? clockFps.toFixed(0) : "—"} fps · ${formatFactor(factor)}× stretch`
     : "Measuring frame times…";
   if (document.activeElement !== scrubber) {
     scrubber.max = String(Math.max(0, count - 1));
@@ -477,7 +489,7 @@ function render(): void {
     takeoff: marks.takeoff,
     landing: marks.landing,
     fps: fps ?? 0,
-    slowMoFactor: factor,
+    slowMoFactor: stretch,
     frameTimes: frameTimes ?? undefined,
   });
   const anyNumber =
@@ -495,15 +507,16 @@ function render(): void {
   const estimate =
     fps === null || marks.stepOff === null || marks.touchdown === null
       ? null
-      : estimateBoxHeight(marks.stepOff, marks.touchdown, fps, factor, frameTimes ?? undefined);
+      : estimateBoxHeight(marks.stepOff, marks.touchdown, fps, stretch, frameTimes ?? undefined);
   const warnings = sanityWarnings({
     heightIn: preview.heightIn,
     gctMs: preview.gctMs,
     boxHeightIn: estimate?.heightIn ?? null,
+    fallSeconds: estimate?.fallSeconds ?? null,
   });
   metricsWarning.hidden = warnings.length === 0;
   metricsWarning.textContent =
-    warnings.length === 0 ? "" : `${warnings.join(" ")} Check the slow-mo factor, the frame rate, and the marks.`;
+    warnings.length === 0 ? "" : `${warnings.join(" ")} Check the marks. Timing uses each frame's timestamp.`;
 
   boxEstimate.hidden = estimate === null;
   boxEstimate.textContent =
@@ -565,7 +578,7 @@ function onSave(): void {
     touchdownFrame: marks.touchdown,
     takeoffFrame: marks.takeoff,
     landingFrame: marks.landing,
-    slowMoFactor: factor,
+    slowMoFactor: activeStretch(),
     stepOffFrame: marks.stepOff,
     frameTimes: frameTimes ?? undefined,
   });
