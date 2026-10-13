@@ -5,6 +5,8 @@
 export interface FootSample {
   frame: number;
   footY: number;
+  /** Lowest point of the higher foot, when both feet are visible. The trailing foot leaves the box last. */
+  upperFootY?: number;
 }
 
 export interface GroundModel {
@@ -17,6 +19,8 @@ export interface GroundModel {
 }
 
 export interface DetectedEvents {
+  /** Last frame with both feet on the box, or null when no box level is visible. */
+  stepOff: number | null;
   touchdown: number;
   takeoff: number;
   landing: number;
@@ -29,15 +33,38 @@ export type Detection =
 const MIN_SAMPLES = 8;
 
 function sortedSamples(samples: readonly FootSample[]): FootSample[] {
-  const byFrame = new Map<number, number>();
+  const byFrame = new Map<number, FootSample>();
   for (const sample of samples) {
     if (Number.isFinite(sample.frame) && Number.isFinite(sample.footY)) {
-      byFrame.set(Math.round(sample.frame), sample.footY);
+      const frame = Math.round(sample.frame);
+      const upper = sample.upperFootY;
+      byFrame.set(
+        frame,
+        upper !== undefined && Number.isFinite(upper)
+          ? { frame, footY: sample.footY, upperFootY: upper }
+          : { frame, footY: sample.footY },
+      );
     }
   }
-  return [...byFrame.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([frame, footY]) => ({ frame, footY }));
+  return [...byFrame.values()].sort((a, b) => a.frame - b.frame);
+}
+
+/**
+ * Last frame at box level before touchdown. Box level is the median of the
+ * first tenth of the clip; the tolerance is tight because free fall starts
+ * slowly, so a loose one would mark step-off late.
+ */
+function findStepOff(ordered: readonly FootSample[], tdIndex: number, ground: number): number | null {
+  const level = (sample: FootSample) => sample.upperFootY ?? sample.footY;
+  const head = ordered.slice(0, Math.max(3, Math.floor(ordered.length * 0.1))).map(level);
+  const box = quantile(head, 0.5);
+  const drop = ground - box;
+  if (drop < 0.02) return null;
+  const tolerance = Math.min(0.01, Math.max(0.003, drop * 0.03));
+  for (let k = tdIndex - 1; k >= 0; k -= 1) {
+    if (level(ordered[k]) <= box + tolerance) return ordered[k].frame;
+  }
+  return null;
 }
 
 function quantile(values: readonly number[], q: number): number {
@@ -114,6 +141,7 @@ export function detectEvents(
     ok: true,
     model,
     events: {
+      stepOff: findStepOff(ordered, tdIndex, model.ground),
       touchdown: ordered[tdIndex].frame,
       takeoff: ordered[toIndex].frame,
       landing: ordered[ldIndex].frame,
@@ -124,7 +152,9 @@ export function detectEvents(
 /** Frames to sample at full resolution around each coarse event. */
 export function refineFrames(events: DetectedEvents, step: number, frameCount: number): number[] {
   const frames = new Set<number>();
-  for (const event of [events.touchdown, events.takeoff, events.landing]) {
+  const marks = [events.stepOff, events.touchdown, events.takeoff, events.landing];
+  for (const event of marks) {
+    if (event === null) continue;
     for (let f = event - step; f <= event + step; f += 1) {
       if (f >= 0 && f < frameCount) frames.add(f);
     }

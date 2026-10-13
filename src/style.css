@@ -596,7 +596,7 @@ legend {
   font-weight: 600;
 }
 
-#save-trial {
+#save-jump {
   margin-top: 0.85rem;
 }
 
@@ -630,13 +630,13 @@ legend {
   color: var(--muted);
 }
 
-#trial-list {
+#jump-list {
   margin: 0.8rem 0 0;
   padding: 0;
   list-style: none;
 }
 
-.trial {
+.jump {
   padding: 0.9rem 0.95rem;
   margin-bottom: 0.6rem;
   background: var(--card);
@@ -644,23 +644,23 @@ legend {
   border-radius: 16px;
 }
 
-.trial .when,
-.trial .detail,
-.trial .notes {
+.jump .when,
+.jump .detail,
+.jump .notes {
   margin-top: 0.2rem;
 }
 
-.trial .when,
-.trial .notes {
+.jump .when,
+.jump .notes {
   color: var(--muted);
   font-size: 0.88rem;
 }
 
-.trial .detail {
+.jump .detail {
   font-variant-numeric: tabular-nums;
 }
 
-.trial .delete {
+.jump .delete {
   min-height: 40px;
   margin-top: 0.45rem;
   padding: 0.2rem 0;
@@ -670,7 +670,7 @@ legend {
   font-weight: 600;
 }
 
-.trial .delete[data-armed="true"] {
+.jump .delete[data-armed="true"] {
   text-decoration: underline;
 }
 

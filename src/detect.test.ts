@@ -27,7 +27,7 @@ describe("detectEvents", () => {
     const result = detectEvents(jump(100, 160, 280, 400));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.events).toEqual({ touchdown: 100, takeoff: 160, landing: 280 });
+    expect(result.events).toMatchObject({ touchdown: 100, takeoff: 160, landing: 280 });
   });
 
   it("gives identical marks for identical input", () => {
@@ -52,7 +52,41 @@ describe("detectEvents", () => {
     if (!first.ok) return;
     const extra = refineFrames(first.events, 4, 400).map((frame) => full[frame]);
     const refined = detectEvents([...coarse, ...extra], first.model);
-    expect(refined.ok && refined.events).toEqual({ touchdown: 101, takeoff: 163, landing: 279 });
+    expect(refined.ok && refined.events).toMatchObject({ touchdown: 101, takeoff: 163, landing: 279 });
+  });
+
+  it("finds the last frame on the box", () => {
+    // In jump(), frame td - 30 is the last frame at box level.
+    const result = detectEvents(jump(100, 160, 280, 400));
+    expect(result.ok && result.events.stepOff).toBeGreaterThanOrEqual(70);
+    expect(result.ok && result.events.stepOff).toBeLessThanOrEqual(71);
+  });
+
+  it("uses the trailing foot for step-off when both feet are visible", () => {
+    const samples = jump(100, 160, 280, 400).map((sample) =>
+      sample.frame >= 60 && sample.frame < 70 ? { ...sample, footY: 0.8, upperFootY: BOX } : sample,
+    );
+    const result = detectEvents(samples);
+    expect(result.ok && result.events.stepOff).toBeGreaterThanOrEqual(70);
+  });
+
+  it("refines step-off from coarse samples", () => {
+    const full = jump(101, 163, 279, 400);
+    const coarse = coarseFrames(400, 4).map((frame) => full[frame]);
+    const first = detectEvents(coarse);
+    if (!first.ok) throw new Error(first.reason);
+    const extra = refineFrames(first.events, 4, 400).map((frame) => full[frame]);
+    const refined = detectEvents([...coarse, ...extra], first.model);
+    const full240 = detectEvents(full);
+    expect(refined.ok && refined.events.stepOff).toBe(full240.ok && full240.events.stepOff);
+  });
+
+  it("has no step-off when there is no box level", () => {
+    const samples = jump(100, 160, 280, 400).map((sample) =>
+      sample.frame < 100 ? { ...sample, footY: FLOOR - 0.01 } : sample,
+    );
+    const result = detectEvents(samples);
+    if (result.ok) expect(result.events.stepOff).toBeNull();
   });
 
   it("reports a reason when there is no landing", () => {

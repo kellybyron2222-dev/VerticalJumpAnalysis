@@ -8,6 +8,29 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, coarse scan then frame-by-frame refinement; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestones 3–5 are specified below and are not built.
 
+Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built ahead of Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
+
+## Slow-mo playback and real time
+
+iPhone slo-mo clips picked from the camera roll often arrive stretched in time: a 240 fps capture plays at 30 fps, so media time runs 8× slower than real time. Durations read from `currentTime` are then inflated (8× GCT and flight, 64× height, 8× RSI).
+
+- Frame indexes always count real captured frames. `frame / capture fps` is real seconds. All metrics use that.
+- Two inputs: capture frame rate (default 240) and slow-mo playback factor (media seconds per real second; chips 1×, 4×, 8×, any value ≥ 1 allowed). Seeking uses `capture fps / factor` frames per media second.
+- Auto-detect on load: play the clip muted at 0.2× and read `requestVideoFrameCallback` `mediaTime`/`presentedFrames`. A low quantile of the per-frame gaps is the clip's frame interval (dropped display frames only make gaps longer). Factor = capture fps ÷ clip fps, snapped to 1/2/4/8 within 15%. If the browser has no frame callbacks, the user picks the factor. A Detect button re-runs it.
+- Changing the factor keeps existing marks on the same video moment (frames are rescaled by old factor ÷ new factor).
+- Sanity warning when jump height is over 40 in or under 2 in, or contact time is outside 80–1000 ms.
+
+## Box height from video
+
+- A fourth, optional mark: step-off, the last frame with both feet on the box. Auto-detect finds it from the pose (the higher foot reaching box level, read from the first tenth of the clip, with a tight tolerance); it is hand-correctable like the other marks.
+- Free fall: airborne frames `stepOff + 1 … touchdown − 1`, so `t = (touchdown − stepOff − 1) / capture fps`, and `box height = g × t² / 2`.
+- Shown in inches and centimeters and labeled as an estimate. It pre-fills the box height field (rounded to 0.5 in) unless the user has typed or picked a value; the field stays editable.
+
+## UI wording
+
+- The UI says "jump", never "trial". Code identifiers may keep `trial`.
+- Readout labels: "Jump height (in)", "Contact time (ms)", "Flight time (ms)", "RSI". RSI is shown as a unitless ratio. The Excel export (Milestone 5) keeps "RSI (m/s)".
+
 ## Constraints
 
 - Static and client-side only. No backend, no account system, no server-side video processing.
@@ -119,6 +142,7 @@ Persist trial numbers only. Suggested record, once Milestone 1 exists (later mil
 - notes
 - touchdown, takeoff, and landing frame indexes
 - derived GCT, flight time, height (m, in, cm), and RSI
+- optional `slowMoFactor` (missing means 1) and `stepOffFrame`
 
 Do not persist object URLs or video blobs.
 

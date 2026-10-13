@@ -10,8 +10,19 @@ export function formatHeightCm(cm: number): string {
   return `${cm.toFixed(1)} cm`;
 }
 
+/** Unitless in the UI. Export columns may still label it m/s. */
 export function formatRsi(rsi: number): string {
-  return `${rsi.toFixed(2)} m/s`;
+  return rsi.toFixed(2);
+}
+
+/** Bare number for a readout whose label already carries "(ms)". */
+export function formatMsValue(ms: number): string {
+  return ms.toFixed(0);
+}
+
+/** Bare number for a readout whose label already carries "(in)". */
+export function formatInValue(inches: number): string {
+  return inches.toFixed(2);
 }
 
 export function formatClock(seconds: number): string {

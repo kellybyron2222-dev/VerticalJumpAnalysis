@@ -39,15 +39,28 @@ function loadLandmarker(): Promise<PoseLandmarker> {
   return landmarkerPromise;
 }
 
-export function footY(landmarks: readonly NormalizedLandmark[] | undefined): number | null {
-  if (!landmarks) return null;
+function lowestPoint(landmarks: readonly NormalizedLandmark[], indexes: readonly number[]): number | null {
   let lowest: number | null = null;
-  for (const index of FOOT_POINTS) {
+  for (const index of indexes) {
     const point = landmarks[index];
     if (!point || (point.visibility ?? 1) < MIN_VISIBILITY) continue;
     if (lowest === null || point.y > lowest) lowest = point.y;
   }
   return lowest;
+}
+
+export function footY(landmarks: readonly NormalizedLandmark[] | undefined): number | null {
+  if (!landmarks) return null;
+  return lowestPoint(landmarks, FOOT_POINTS);
+}
+
+/** The higher of the two feet, when both are visible. */
+export function upperFootY(landmarks: readonly NormalizedLandmark[] | undefined): number | null {
+  if (!landmarks) return null;
+  const left = lowestPoint(landmarks, FOOT_POINTS.slice(0, 3));
+  const right = lowestPoint(landmarks, FOOT_POINTS.slice(3));
+  if (left === null || right === null) return null;
+  return Math.min(left, right);
 }
 
 export interface AnalyzeOptions {
@@ -78,7 +91,10 @@ export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
       const result = landmarker.detect(canvas);
       const y = footY(result.landmarks[0]);
-      if (y !== null) samples.push({ frame: frames[i], footY: y });
+      const upper = upperFootY(result.landmarks[0]);
+      if (y !== null) {
+        samples.push(upper === null ? { frame: frames[i], footY: y } : { frame: frames[i], footY: y, upperFootY: upper });
+      }
       if (i % 8 === 0) onProgress(`${label} ${i + 1} / ${frames.length}`);
     }
   };

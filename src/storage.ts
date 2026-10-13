@@ -21,6 +21,10 @@ export interface TrialRecord {
   heightIn: number;
   heightCm: number;
   rsi: number;
+  /** Media seconds per real second. Missing on older records, which means 1. */
+  slowMoFactor?: number;
+  /** Last frame on the box, when marked. */
+  stepOffFrame?: number;
 }
 
 export interface NewTrialInput {
@@ -32,6 +36,8 @@ export interface NewTrialInput {
   touchdownFrame: number;
   takeoffFrame: number;
   landingFrame: number;
+  slowMoFactor?: number;
+  stepOffFrame?: number | null;
   id?: string;
   createdAt?: string;
 }
@@ -88,7 +94,21 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
   if (!Number.isFinite(input.boxHeightIn) || input.boxHeightIn <= 0) return null;
   if (input.jumpType !== "drop" && input.jumpType !== "depth") return null;
 
+  const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame"> = {};
+  if (input.slowMoFactor !== undefined && Number.isFinite(input.slowMoFactor) && input.slowMoFactor > 0) {
+    extra.slowMoFactor = input.slowMoFactor;
+  }
+  if (
+    typeof input.stepOffFrame === "number" &&
+    Number.isInteger(input.stepOffFrame) &&
+    input.stepOffFrame >= 0 &&
+    input.stepOffFrame < input.touchdownFrame
+  ) {
+    extra.stepOffFrame = input.stepOffFrame;
+  }
+
   return {
+    ...extra,
     id: input.id ?? crypto.randomUUID(),
     createdAt: input.createdAt ?? new Date().toISOString(),
     fps: input.fps,

@@ -6,7 +6,9 @@ import {
   formatHeightCm,
   formatHeightIn,
   formatJumpType,
+  formatInValue,
   formatMilliseconds,
+  formatMsValue,
   formatRsi,
 } from "./format.ts";
 
@@ -16,7 +18,9 @@ describe("formatters", () => {
     expect(formatMilliseconds(1000 / 240)).toBe("4.2 ms");
     expect(formatHeightIn(12.0652682087)).toBe("12.07 in");
     expect(formatHeightCm(30.64578125)).toBe("30.6 cm");
-    expect(formatRsi(1.22583125)).toBe("1.23 m/s");
+    expect(formatRsi(1.22583125)).toBe("1.23");
+    expect(formatMsValue(249.6)).toBe("250");
+    expect(formatInValue(15.104)).toBe("15.10");
     expect(formatClock(0.25)).toBe("0.250 s");
   });
 

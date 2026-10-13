@@ -73,14 +73,14 @@
           </li>
           <li>
             <h3>240 fps</h3>
-            <p>iPhone slo-mo. The trial frame rate starts at 240.</p>
+            <p>iPhone slo-mo. The capture frame rate starts at 240.</p>
           </li>
         </ol>
-        <button type="button" id="dismiss-guide" class="button-primary">Start a trial</button>
+        <button type="button" id="dismiss-guide" class="button-primary">Start a jump</button>
       </section>
 
       <section id="analyze" hidden>
-        <p class="privacy">The clip stays on this phone. A saved trial stores frames and numbers only.</p>
+        <p class="privacy">The clip stays on this phone. A saved jump stores frames and numbers only.</p>
 
         <div id="empty-video" class="empty">
           <h2>Load a slo-mo clip</h2>
@@ -109,9 +109,21 @@
           <p id="time-label" class="time-readout">0.000 s</p>
 
           <label class="field" for="fps">
-            Frames per second
+            Capture frame rate (fps)
             <input id="fps" type="number" inputmode="numeric" min="1" step="1" value="240" />
           </label>
+
+          <label class="field" for="slowmo">
+            Slow-mo playback factor
+            <input id="slowmo" type="number" inputmode="decimal" min="1" step="0.1" value="1" />
+          </label>
+          <div class="chips" id="slowmo-chips">
+            <button type="button" data-factor="1">1×</button>
+            <button type="button" data-factor="4">4×</button>
+            <button type="button" data-factor="8">8×</button>
+            <button type="button" id="detect-cadence">Detect</button>
+          </div>
+          <p id="cadence-status" class="cadence-status" role="status"></p>
 
           <div class="transport" role="group" aria-label="Frame step">
             <button type="button" id="step-back-10" data-step="-10" disabled>−10</button>
@@ -139,6 +151,17 @@
           </div>
 
           <div class="marks">
+            <article class="mark" data-event="stepoff">
+              <div>
+                <h3>Step-off (last frame on box)</h3>
+                <p id="so-frame">Not set</p>
+              </div>
+              <div class="mark-actions">
+                <button type="button" id="set-so">Set</button>
+                <button type="button" id="goto-so" disabled>Go to</button>
+                <button type="button" id="clear-so" class="text-button" disabled>Clear</button>
+              </div>
+            </article>
             <article class="mark" data-event="touchdown">
               <div>
                 <h3>Touchdown</h3>
@@ -174,7 +197,7 @@
             </article>
           </div>
 
-          <form id="trial-form">
+          <form id="jump-form">
             <fieldset>
               <legend>Jump type</legend>
               <div class="segment" role="radiogroup" aria-label="Jump type">
@@ -200,6 +223,7 @@
                 placeholder="12"
               />
             </label>
+            <p id="box-estimate" class="box-estimate" hidden></p>
             <div class="chips" id="box-chips">
               <button type="button" data-height="6">6</button>
               <button type="button" data-height="12">12</button>
@@ -235,27 +259,28 @@
             </div>
             <dl id="metrics-values" hidden>
               <div>
-                <dt>GCT</dt>
+                <dt>Jump height (in)</dt>
+                <dd id="m-height">—</dd>
+                <dd id="m-height-cm" class="sub">—</dd>
+              </div>
+              <div>
+                <dt>Contact time (ms)</dt>
                 <dd id="m-gct">—</dd>
               </div>
               <div>
-                <dt>Flight</dt>
+                <dt>Flight time (ms)</dt>
                 <dd id="m-ft">—</dd>
-              </div>
-              <div>
-                <dt>Height</dt>
-                <dd id="m-height">—</dd>
-                <dd id="m-height-cm" class="sub">—</dd>
               </div>
               <div>
                 <dt>RSI</dt>
                 <dd id="m-rsi">—</dd>
               </div>
             </dl>
+            <p id="metrics-warning" class="form-error" role="alert" hidden></p>
           </section>
 
           <p id="form-error" class="form-error" role="alert" hidden></p>
-          <button type="button" id="save-trial" class="button-primary">Save trial</button>
+          <button type="button" id="save-jump" class="button-primary">Save jump</button>
           <p id="save-status" class="save-status" role="status"></p>
 
           <label class="button-secondary file-button" for="video-input">Replace video</label>
@@ -263,8 +288,8 @@
 
         <section class="saved" aria-labelledby="saved-title">
           <h2 id="saved-title">Saved on this phone <span id="saved-count">0</span></h2>
-          <p id="saved-empty">No trials saved on this phone yet.</p>
-          <ul id="trial-list"></ul>
+          <p id="saved-empty">No jumps saved on this phone yet.</p>
+          <ul id="jump-list"></ul>
         </section>
       </section>
     </div>

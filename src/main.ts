@@ -10,14 +10,24 @@ import {
   formatClock,
   formatHeightCm,
   formatHeightIn,
+  formatInValue,
   formatJumpType,
   formatMilliseconds,
+  formatMsValue,
   formatRsi,
 } from "./format.ts";
 import { trialFormError } from "./form.ts";
+import { measureClipFps } from "./cadence.ts";
 import { analyzeClip } from "./pose.ts";
 import { previewMetrics } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
+import {
+  estimateBoxHeight,
+  mediaFrameRate,
+  rescaleFrame,
+  sanityWarnings,
+  slowMoFactorFor,
+} from "./timing.ts";
 import {
   createTrial,
   loadTrials,
@@ -42,7 +52,7 @@ const timeLabel = must<HTMLElement>("#time-label");
 const fpsInput = must<HTMLInputElement>("#fps");
 const scrubber = must<HTMLInputElement>("#scrubber");
 const stepButtons = [...document.querySelectorAll<HTMLButtonElement>(".transport button")];
-const trialForm = must<HTMLFormElement>("#trial-form");
+const jumpForm = must<HTMLFormElement>("#jump-form");
 const boxInput = must<HTMLInputElement>("#box-height");
 const notesInput = must<HTMLTextAreaElement>("#notes");
 const metricsHint = must<HTMLElement>("#metrics-hint");
@@ -51,10 +61,15 @@ const formError = must<HTMLElement>("#form-error");
 const saveStatus = must<HTMLElement>("#save-status");
 const savedCount = must<HTMLElement>("#saved-count");
 const savedEmpty = must<HTMLElement>("#saved-empty");
-const trialList = must<HTMLUListElement>("#trial-list");
+const jumpList = must<HTMLUListElement>("#jump-list");
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const detectStatus = must<HTMLElement>("#detect-status");
+const slowInput = must<HTMLInputElement>("#slowmo");
+const cadenceButton = must<HTMLButtonElement>("#detect-cadence");
+const cadenceStatus = must<HTMLElement>("#cadence-status");
+const boxEstimate = must<HTMLElement>("#box-estimate");
+const metricsWarning = must<HTMLElement>("#metrics-warning");
 
 video.playsInline = true;
 video.setAttribute("playsinline", "");
@@ -62,9 +77,10 @@ video.setAttribute("webkit-playsinline", "");
 video.muted = true;
 video.controls = false;
 
-const seeker = new FrameSeeker(video, readFps() ?? 240);
+const seeker = new FrameSeeker(video, mediaFrameRate(readFps() ?? 240, readFactor()));
 
 const marks = {
+  stepOff: null as number | null,
   touchdown: null as number | null,
   takeoff: null as number | null,
   landing: null as number | null,
@@ -75,6 +91,28 @@ let ready = false;
 let objectUrl: string | null = null;
 let pendingDeleteId: string | null = null;
 let detecting: AbortController | null = null;
+let factor = readFactor();
+let boxAutoFilled = false;
+let measuring = false;
+let measuredUrl: string | null = null;
+
+cadenceButton.addEventListener("click", () => {
+  void detectCadence();
+});
+
+slowInput.addEventListener("input", () => {
+  const next = Number(slowInput.value);
+  if (!Number.isFinite(next) || next < 1) return;
+  applyFactor(next);
+});
+
+for (const chip of document.querySelectorAll<HTMLButtonElement>("#slowmo-chips button[data-factor]")) {
+  chip.addEventListener("click", () => {
+    slowInput.value = chip.dataset.factor ?? "1";
+    cadenceStatus.textContent = "";
+    applyFactor(Number(slowInput.value));
+  });
+}
 
 autoButton.addEventListener("click", () => {
   void runDetection();
@@ -136,9 +174,10 @@ fpsInput.addEventListener("input", () => {
     render();
     return;
   }
-  seeker.setFps(fps);
+  seeker.setFps(mediaFrameRate(fps, factor));
   if (ready) setFrame(frame);
   else render();
+  maybePrefillBox();
 });
 
 scrubber.addEventListener("input", () => {
@@ -152,26 +191,33 @@ for (const button of stepButtons) {
   });
 }
 
+bindMark("stepOff", "#set-so", "#goto-so", "#clear-so");
 bindMark("touchdown", "#set-td", "#goto-td", "#clear-td");
 bindMark("takeoff", "#set-to", "#goto-to", "#clear-to");
 bindMark("landing", "#set-ld", "#goto-ld", "#clear-ld");
 
-trialForm.addEventListener("submit", (event) => {
+jumpForm.addEventListener("submit", (event) => {
   event.preventDefault();
   onSave();
 });
-trialForm.addEventListener("input", clearFeedback);
-boxInput.addEventListener("input", syncChips);
+jumpForm.addEventListener("input", clearFeedback);
+boxInput.addEventListener("input", () => {
+  boxAutoFilled = false;
+  syncChips();
+  render();
+});
 
 for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips button")) {
   chip.addEventListener("click", () => {
     boxInput.value = chip.dataset.height ?? "";
+    boxAutoFilled = false;
+    render();
     syncChips();
     clearFeedback();
   });
 }
 
-must<HTMLButtonElement>("#save-trial").addEventListener("click", onSave);
+must<HTMLButtonElement>("#save-jump").addEventListener("click", onSave);
 
 renderTrials();
 render();
@@ -203,9 +249,12 @@ function loadFile(file: File): void {
   objectUrl = URL.createObjectURL(file);
   ready = false;
   frame = 0;
+  marks.stepOff = null;
   marks.touchdown = null;
   marks.takeoff = null;
   marks.landing = null;
+  measuredUrl = null;
+  cadenceStatus.textContent = "";
   clipName.textContent = file.name;
   emptyVideo.hidden = true;
   player.hidden = false;
@@ -225,7 +274,7 @@ function primePlayback(media: HTMLVideoElement): void {
     void media
       .play()
       .then(() => {
-        media.pause();
+        if (!measuring) media.pause();
       })
       .catch(() => {
         // iOS may block play until the next tap. Frame seeks still run.
@@ -244,7 +293,75 @@ function onReady(): void {
   setTransportEnabled(true);
   frame = clampFrame(frame, count);
   render();
-  seeker.request(frame);
+  if (objectUrl && measuredUrl !== objectUrl) {
+    measuredUrl = objectUrl;
+    void detectCadence();
+  } else {
+    seeker.request(frame);
+  }
+}
+
+/** Reads the clip's real frame cadence and sets the slow-mo factor from it. */
+async function detectCadence(): Promise<void> {
+  if (!ready || measuring || detecting) return;
+  const url = objectUrl;
+  measuring = true;
+  setTransportEnabled(false);
+  cadenceStatus.textContent = "Reading the clip's frame rate…";
+  try {
+    const clipFps = await measureClipFps(video);
+    if (url !== objectUrl) return;
+    const capture = readFps();
+    if (clipFps === null || capture === null) {
+      cadenceStatus.textContent =
+        "Could not read the clip's frame rate here. If the clip plays slowly, pick 4× or 8×.";
+      return;
+    }
+    const detected = slowMoFactorFor(capture, clipFps);
+    slowInput.value = String(detected);
+    applyFactor(detected);
+    cadenceStatus.textContent =
+      detected === 1
+        ? `Clip plays at ${clipFps.toFixed(0)} fps, so it is real time (1×).`
+        : `Clip plays at ${clipFps.toFixed(0)} fps, so ${capture} fps capture is ${detected}× slow-mo. Times are converted to real seconds.`;
+  } finally {
+    measuring = false;
+    if (ready && url === objectUrl) {
+      setTransportEnabled(true);
+      setFrame(frame);
+    }
+  }
+}
+
+/** Keeps marks on the same video moments; only the real-time scale changes. */
+function applyFactor(next: number): void {
+  if (!(next >= 1) || next === factor) return;
+  for (const key of Object.keys(marks) as Array<keyof typeof marks>) {
+    const value = marks[key];
+    if (value !== null) marks[key] = rescaleFrame(value, factor, next);
+  }
+  frame = rescaleFrame(frame, factor, next);
+  factor = next;
+  seeker.setFps(mediaFrameRate(readFps() ?? 240, factor));
+  clearFeedback();
+  if (ready) {
+    scrubber.max = String(Math.max(0, seeker.frameCount - 1));
+    setFrame(frame);
+  } else render();
+  maybePrefillBox();
+}
+
+/** Fills the box field from the video estimate unless the user typed a value. */
+function maybePrefillBox(): void {
+  const fps = readFps();
+  if (fps === null || marks.stepOff === null || marks.touchdown === null) return;
+  if (boxInput.value.trim() !== "" && !boxAutoFilled) return;
+  const estimate = estimateBoxHeight(marks.stepOff, marks.touchdown, fps);
+  if (!estimate) return;
+  boxInput.value = String(Math.round(estimate.heightIn * 2) / 2);
+  boxAutoFilled = true;
+  syncChips();
+  render();
 }
 
 async function runDetection(): Promise<void> {
@@ -275,10 +392,12 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = `Auto-detect failed: ${result.reason} Mark the frames by hand.`;
       return;
     }
+    marks.stepOff = result.events.stepOff;
     marks.touchdown = result.events.touchdown;
     marks.takeoff = result.events.takeoff;
     marks.landing = result.events.landing;
     frame = result.events.touchdown;
+    maybePrefillBox();
     detectStatus.textContent =
       "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
   } catch (error) {
@@ -298,7 +417,7 @@ async function runDetection(): Promise<void> {
 }
 
 function step(delta: number): void {
-  if (!ready || detecting) return;
+  if (!ready || detecting || measuring) return;
   setFrame(frame + delta);
 }
 
@@ -322,6 +441,7 @@ function bindMark(
     marks[key] = frame;
     clearFeedback();
     render();
+    maybePrefillBox();
   });
   must<HTMLButtonElement>(gotoSelector).addEventListener("click", () => {
     const marked = marks[key];
@@ -346,6 +466,7 @@ function render(): void {
     scrubber.value = String(count > 0 ? clampFrame(frame, count) : 0);
   }
 
+  renderMark(marks.stepOff, "#so-frame", "#goto-so", "#clear-so");
   renderMark(marks.touchdown, "#td-frame", "#goto-td", "#clear-td");
   renderMark(marks.takeoff, "#to-frame", "#goto-to", "#clear-to");
   renderMark(marks.landing, "#ld-frame", "#goto-ld", "#clear-ld");
@@ -366,12 +487,27 @@ function render(): void {
   metricsHint.hidden = preview.message === null;
   if (preview.message) metricsHint.textContent = preview.message;
   metricsValues.hidden = !anyNumber;
-  must<HTMLElement>("#m-gct").textContent = preview.gctMs === null ? "—" : formatMilliseconds(preview.gctMs);
-  must<HTMLElement>("#m-ft").textContent = preview.flightMs === null ? "—" : formatMilliseconds(preview.flightMs);
-  must<HTMLElement>("#m-height").textContent = preview.heightIn === null ? "—" : formatHeightIn(preview.heightIn);
+  must<HTMLElement>("#m-gct").textContent = preview.gctMs === null ? "—" : formatMsValue(preview.gctMs);
+  must<HTMLElement>("#m-ft").textContent = preview.flightMs === null ? "—" : formatMsValue(preview.flightMs);
+  must<HTMLElement>("#m-height").textContent = preview.heightIn === null ? "—" : formatInValue(preview.heightIn);
   must<HTMLElement>("#m-height-cm").textContent =
     preview.heightCm === null ? "—" : formatHeightCm(preview.heightCm);
   must<HTMLElement>("#m-rsi").textContent = preview.rsi === null ? "—" : formatRsi(preview.rsi);
+
+  const warnings = sanityWarnings({ heightIn: preview.heightIn, gctMs: preview.gctMs });
+  metricsWarning.hidden = warnings.length === 0;
+  metricsWarning.textContent =
+    warnings.length === 0 ? "" : `${warnings.join(" ")} Check the slow-mo factor, the frame rate, and the marks.`;
+
+  const estimate =
+    fps === null || marks.stepOff === null || marks.touchdown === null
+      ? null
+      : estimateBoxHeight(marks.stepOff, marks.touchdown, fps);
+  boxEstimate.hidden = estimate === null;
+  boxEstimate.textContent =
+    estimate === null
+      ? ""
+      : `Estimate from video (free fall ${formatMsValue(estimate.fallSeconds * 1000)} ms): ${formatHeightIn(estimate.heightIn)} · ${formatHeightCm(estimate.heightCm)}.${boxAutoFilled ? " Box height filled from this estimate. Edit it if you know the real height." : ""}`;
   syncChips();
 }
 
@@ -412,7 +548,7 @@ function onSave(): void {
   });
   if (message || fps === null || boxHeightIn === null || (jumpType !== "drop" && jumpType !== "depth") || arm === null) {
     formError.hidden = false;
-    formError.textContent = message ?? "Check the trial and try again.";
+    formError.textContent = message ?? "Check the jump and try again.";
     saveStatus.textContent = "";
     return;
   }
@@ -427,6 +563,8 @@ function onSave(): void {
     touchdownFrame: marks.touchdown,
     takeoffFrame: marks.takeoff,
     landingFrame: marks.landing,
+    slowMoFactor: factor,
+    stepOffFrame: marks.stepOff,
   });
   if (!trial) {
     formError.hidden = false;
@@ -442,12 +580,13 @@ function onSave(): void {
     return;
   }
 
+  marks.stepOff = null;
   marks.touchdown = null;
   marks.takeoff = null;
   marks.landing = null;
   notesInput.value = "";
   formError.hidden = true;
-  saveStatus.textContent = "Trial saved on this phone.";
+  saveStatus.textContent = "Jump saved on this phone.";
   render();
   renderTrials();
 }
@@ -459,13 +598,13 @@ function renderTrials(): void {
   }
   savedCount.textContent = String(trials.length);
   savedEmpty.hidden = trials.length > 0;
-  trialList.replaceChildren();
-  for (const trial of trials) trialList.append(renderTrial(trial));
+  jumpList.replaceChildren();
+  for (const trial of trials) jumpList.append(renderTrial(trial));
 }
 
 function renderTrial(trial: TrialRecord): HTMLLIElement {
   const item = document.createElement("li");
-  item.className = "trial";
+  item.className = "jump";
 
   const when = document.createElement("p");
   when.className = "when";
@@ -476,7 +615,7 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
 
   const detail = document.createElement("p");
   detail.className = "detail";
-  detail.textContent = `${formatMilliseconds(trial.gctMs)} GCT · ${formatMilliseconds(trial.flightMs)} flight · ${formatHeightIn(trial.heightIn)} · ${formatRsi(trial.rsi)}`;
+  detail.textContent = `Jump height ${formatHeightIn(trial.heightIn)} · Contact time ${formatMilliseconds(trial.gctMs)} · Flight time ${formatMilliseconds(trial.flightMs)} · RSI ${formatRsi(trial.rsi)}${trial.slowMoFactor && trial.slowMoFactor !== 1 ? ` · ${trial.slowMoFactor}× slow-mo` : ""}`;
 
   item.append(when, title, detail);
   if (trial.notes) {
@@ -524,7 +663,8 @@ function setTransportEnabled(enabled: boolean): void {
   for (const button of stepButtons) button.disabled = !enabled;
   scrubber.disabled = !enabled;
   autoButton.disabled = !enabled;
-  for (const id of ["#set-td", "#set-to", "#set-ld"]) {
+  cadenceButton.disabled = !enabled;
+  for (const id of ["#set-so", "#set-td", "#set-to", "#set-ld"]) {
     must<HTMLButtonElement>(id).disabled = !enabled;
   }
 }
@@ -533,6 +673,11 @@ function readFps(): number | null {
   const value = Number(fpsInput.value);
   if (!Number.isFinite(value) || value <= 0) return null;
   return value;
+}
+
+function readFactor(): number {
+  const value = Number(must<HTMLInputElement>("#slowmo").value);
+  return Number.isFinite(value) && value >= 1 ? value : 1;
 }
 
 function readBox(): number | null {
