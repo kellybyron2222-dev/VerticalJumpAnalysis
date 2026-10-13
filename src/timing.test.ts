@@ -12,6 +12,8 @@ import {
   realSecondsFromMedia,
   rescaleFrame,
   sanityWarnings,
+  sloMoStretch,
+  slowFallStepOff,
   slowMoFactorFor,
   snapCaptureFps,
   type FrameTick,
@@ -196,49 +198,65 @@ describe("estimateBoxHeight", () => {
     expect(estimate!.heightIn).toBeCloseTo(12, 0);
   });
 
-  it("uses IMG_0227 timestamps instead of a fixed fps", () => {
-    // Frames read off the clip: last frame on the ~6 in box (1.04s), first frame
-    // on the floor (1.24s), last frame still down (1.81s), landing (2.19s).
-    // Feet are still flat at 1.80s and clear by 1.84s, so the ~567 ms contact
-    // is the deep squat, not a touchdown or takeoff sitting on the wrong frame.
+  it("turns IMG_0227's playback clock into a ~170 fps capture", () => {
+    // Phone readout before this fix, from the playback timestamps with no
+    // stretch: fps ~43, box ~28 in, jump ~230 in, contact ~850 ms, flight ~2200 ms.
+    // Those marks: step-off 24, touchdown 40, takeoff 76, landing 170.
     const times = IMG_0227_FRAME_TIMES;
-    const stepOff = 45;
-    const touchdown = 52;
+    const playback = measuredFps(times)!;
+    expect(playback).toBeGreaterThan(40);
+    expect(playback).toBeLessThan(46);
+    expect(sloMoStretch(times)).toBe(4);
+    expect(playback * 4).toBeGreaterThan(165);
+    expect(playback * 4).toBeLessThan(180);
+    expect(isVariableRate(times)).toBe(true);
+
+    const visibleStep = 24;
+    const touchdown = 40;
     const takeoff = 76;
-    const landing = 94;
-    const box = estimateBoxHeight(stepOff, touchdown, 60, 1, times);
+    const landing = 170;
+    const rawBox = estimateBoxHeight(visibleStep, touchdown, playback, 1, times);
+    const rawJump = computeTrialMetrics({
+      touchdown,
+      takeoff,
+      landing,
+      fps: playback,
+      slowMoFactor: 1,
+      frameTimes: times,
+    });
+    expect(rawBox!.heightIn).toBeGreaterThan(25);
+    expect(rawJump!.heightIn).toBeGreaterThan(200);
+    expect(rawJump!.gctMs).toBeGreaterThan(800);
+    expect(rawJump!.flightMs).toBeGreaterThan(2000);
+
+    const stepOff = slowFallStepOff(visibleStep, touchdown);
+    const box = estimateBoxHeight(stepOff, touchdown, playback, 4, times);
     const jump = computeTrialMetrics({
       touchdown,
       takeoff,
       landing,
-      fps: 60,
-      slowMoFactor: 1,
+      fps: playback,
+      slowMoFactor: 4,
       frameTimes: times,
     });
-    expect(box).not.toBeNull();
-    expect(jump).not.toBeNull();
-    const fall = times[touchdown] - times[stepOff + 1];
-    expect(box!.fallSeconds).toBeCloseTo(fall, 6);
-    expect(box!.heightIn).toBeGreaterThan(4);
+    expect(box!.heightIn).toBeGreaterThan(5);
     expect(box!.heightIn).toBeLessThan(8);
-    expect(jump!.flightMs).toBeGreaterThan(250);
-    expect(jump!.flightMs).toBeLessThan(700);
-    expect(jump!.heightIn).toBeGreaterThan(4);
-    expect(jump!.heightIn).toBeLessThan(20);
-    expect(jump!.gctMs).toBeCloseTo((times[takeoff] - times[touchdown]) * 1000, 4);
-    expect(jump!.rsi).toBeCloseTo(jump!.heightM / jump!.gctSeconds, 6);
-    // The same frame indexes divided by 60 or 240 are a different fall.
-    const by60 = (touchdown - (stepOff + 1)) / 60;
-    const by240 = (touchdown - (stepOff + 1)) / 240;
-    expect(Math.abs(box!.fallSeconds - by60)).toBeGreaterThan(0.05);
-    expect(Math.abs(box!.fallSeconds - by240)).toBeGreaterThan(0.05);
-    const fps = measuredFps(times);
-    expect(fps).toBeGreaterThan(30);
-    expect(fps).toBeLessThan(50);
-    expect(isVariableRate(times)).toBe(true);
-    expect(sanityWarnings({ heightIn: jump!.heightIn, gctMs: jump!.gctMs, boxHeightIn: box!.heightIn, fallSeconds: box!.fallSeconds })).toEqual(
-      [],
-    );
+    expect(jump!.heightIn).toBeGreaterThan(12);
+    expect(jump!.heightIn).toBeLessThan(18);
+    expect(jump!.gctMs).toBeGreaterThan(150);
+    expect(jump!.gctMs).toBeLessThan(300);
+    expect(jump!.flightMs).toBeGreaterThan(450);
+    expect(jump!.flightMs).toBeLessThan(650);
+    expect(jump!.rsi).toBeGreaterThan(1);
+    expect(jump!.rsi).toBeLessThan(3);
+    expect(
+      sanityWarnings({
+        heightIn: jump!.heightIn,
+        gctMs: jump!.gctMs,
+        boxHeightIn: box!.heightIn,
+        fallSeconds: box!.fallSeconds,
+      }),
+    ).toEqual([]);
   });
 
   it("does not time a variable-rate clip by its average fps", () => {

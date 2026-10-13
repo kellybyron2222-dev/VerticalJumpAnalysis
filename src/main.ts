@@ -22,7 +22,7 @@ import { parseMovFrameTimes } from "./mov.ts";
 import { analyzeClip } from "./pose.ts";
 import { previewMetrics, realSecondsOnClock } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
-import { estimateBoxHeight, isVariableRate, measuredFps, sanityWarnings } from "./timing.ts";
+import { captureFps, estimateBoxHeight, isVariableRate, measuredFps, sanityWarnings, sloMoStretch, slowFallStepOff } from "./timing.ts";
 import {
   createTrial,
   loadTrials,
@@ -88,6 +88,7 @@ let objectUrl: string | null = null;
 let pendingDeleteId: string | null = null;
 let detecting: AbortController | null = null;
 let factor = readFactor();
+let stretchTouched = false;
 let boxAutoFilled = false;
 let measuring = false;
 let loadGeneration = 0;
@@ -244,6 +245,7 @@ function loadFile(file: File): void {
   detecting = null;
   loadGeneration += 1;
   measuring = false;
+  stretchTouched = false;
   fpsInput.disabled = false;
   cancelDetect.hidden = true;
   detectStatus.textContent = "";
@@ -317,12 +319,22 @@ function onReady(): void {
 function applyFrameClock(times: readonly number[]): void {
   frameTimes = [...times];
   seeker.setClock(frameTimes);
-  const fps = measuredFps(frameTimes);
-  if (fps) fpsInput.value = fps.toFixed(1);
+  const playback = measuredFps(frameTimes);
+  const stretch = sloMoStretch(frameTimes);
+  if (!stretchTouched && stretch > 1) {
+    factor = stretch;
+    slowInput.value = String(stretch);
+    syncChips();
+  }
+  const capture = captureFps(frameTimes);
+  if (capture) fpsInput.value = capture.toFixed(1);
   const variable = isVariableRate(frameTimes);
-  cadenceStatus.textContent = variable
-    ? `Variable frame rate, average ${fps ? fps.toFixed(0) : "—"} fps over ${frameTimes.length} frames. Photos may show that average (this clip has been read as 171). Times use each frame's timestamp, not that number.`
-    : `Measured ${fps ? fps.toFixed(0) : "—"} fps from ${frameTimes.length} frame timestamps. Contact, flight, and the box use those times.`;
+  cadenceStatus.textContent =
+    stretch > 1
+      ? `Capture ${capture ? capture.toFixed(1) : "—"} fps. Playback holds frames at ${playback ? playback.toFixed(0) : "—"} fps, so times are ${stretch}× slow-mo, not that playback rate.`
+      : variable
+        ? `Variable frame rate, average ${playback ? playback.toFixed(0) : "—"} fps over ${frameTimes.length} frames. Times use each frame's timestamp.`
+        : `Measured ${playback ? playback.toFixed(0) : "—"} fps from ${frameTimes.length} frame timestamps. Contact, flight, and the box use those times.`;
   if (ready) {
     const count = seeker.frameCount;
     scrubber.max = String(Math.max(0, count - 1));
@@ -371,13 +383,14 @@ async function detectCadence(): Promise<void> {
  * Marks stay on the same frame. The factor only changes real-seconds conversion,
  * so tapping 2×/4×/8× does not move the picture and cannot be applied twice.
  */
-/** A variable-rate clip already has the ramps in its timestamps. One factor would undo that. */
+/** Playback holds are not real time. A 1/60-and-1/30 slo-mo file is 4× from capture rate to the clock. */
 function activeStretch(): number {
-  return frameTimes && isVariableRate(frameTimes) ? 1 : factor;
+  return factor;
 }
 
 function applyFactor(next: number): void {
   if (!(next >= 1) || next === factor) return;
+  stretchTouched = true;
   factor = next;
   clearFeedback();
   render();
@@ -425,7 +438,10 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = `Auto-detect failed: ${result.reason} Mark the frames by hand.`;
       return;
     }
-    marks.stepOff = result.events.stepOff;
+    marks.stepOff =
+      result.events.stepOff !== null && activeStretch() >= 4
+        ? slowFallStepOff(result.events.stepOff, result.events.touchdown)
+        : result.events.stepOff;
     marks.touchdown = result.events.touchdown;
     marks.takeoff = result.events.takeoff;
     marks.landing = result.events.landing;
@@ -493,17 +509,20 @@ function render(): void {
   const count = fps === null ? 0 : seeker.frameCount;
   frameLabel.textContent = String(frame);
   totalLabel.textContent = String(count);
-  const clockFps = frameTimes ? measuredFps(frameTimes) : null;
+  const playbackFps = frameTimes ? measuredFps(frameTimes) : null;
+  const shownFps = frameTimes ? captureFps(frameTimes) : null;
   const variable = frameTimes ? isVariableRate(frameTimes) : false;
   const stretch = activeStretch();
   timeLabel.textContent =
     frameTimes && frame < frameTimes.length
-      ? formatClock(realSecondsOnClock(frameTimes, 0, frame, clockFps ?? 1, stretch))
+      ? formatClock(realSecondsOnClock(frameTimes, 0, frame, playbackFps ?? 1, stretch))
       : "—";
   timingReadout.textContent = frameTimes
-    ? variable
-      ? `Variable · average ${clockFps ? clockFps.toFixed(0) : "—"} fps · timed from frame stamps`
-      : `Measured ${clockFps ? clockFps.toFixed(0) : "—"} fps · ${formatFactor(factor)}× stretch`
+    ? sloMoStretch(frameTimes) > 1
+      ? `Capture ${shownFps ? shownFps.toFixed(0) : "—"} fps · ${formatFactor(stretch)}× slow-mo`
+      : variable
+        ? `Variable · average ${playbackFps ? playbackFps.toFixed(0) : "—"} fps · timed from frame stamps`
+        : `Measured ${playbackFps ? playbackFps.toFixed(0) : "—"} fps · ${formatFactor(factor)}× stretch`
     : "Measuring frame times…";
   if (document.activeElement !== scrubber) {
     scrubber.max = String(Math.max(0, count - 1));

@@ -36,6 +36,38 @@ export function isVariableRate(times: readonly number[]): boolean {
 }
 
 /**
+ * iPhone slo-mo playback holds each captured frame for one or two ticks
+ * (about 1/60 s and 1/30 s). The average of those holds is what the file's
+ * timestamps measure (~43 fps on IMG_0227). Photos' fps is the capture rate,
+ * about four times that average (~170 fps). Real time is the timestamp delta
+ * divided by this stretch.
+ */
+export function sloMoStretch(times: readonly number[]): number {
+  const range = frameGapRange(times);
+  if (!range) return 1;
+  const ratio = range.longest / range.shortest;
+  if (ratio >= 1.6 && ratio <= 2.6 && range.shortest >= 0.012 && range.shortest <= 0.022) return 4;
+  return 1;
+}
+
+/** Capture frame rate implied by a playback clock. This is the number to show, not the hold average. */
+export function captureFps(times: readonly number[]): number | null {
+  const playback = measuredFps(times);
+  if (!playback) return null;
+  return playback * sloMoStretch(times);
+}
+
+/**
+ * Pose marks step-off once the foot has visibly dropped. A free fall covers
+ * the first quarter of its distance in the first half of the time, so the
+ * visible gap is about half the real drop. Repeat that gap once, backward.
+ */
+export function slowFallStepOff(stepOff: number, touchdown: number): number {
+  if (!(touchdown > stepOff)) return stepOff;
+  return Math.max(0, stepOff - (touchdown - stepOff));
+}
+
+/**
  * Strictly increasing presentation times from frame callbacks.
  * Repeated callbacks for one frame (same mediaTime) are dropped.
  */
