@@ -25,6 +25,25 @@ export function clampFrame(frame: number, frameCount: number): number {
  * (common on iOS) on this frame instead of the previous one.
  * The time stays inside the frame and inside the media duration.
  */
+/**
+ * Seek time for a frame on a variable-rate clock. `times` are presentation
+ * timestamps. A nudge past the frame start keeps iOS on this frame.
+ */
+export function frameSeekTimeFromClock(
+  times: readonly number[],
+  frame: number,
+  durationSeconds: number,
+): number {
+  const start = times[frame] ?? 0;
+  const next = frame + 1 < times.length ? times[frame + 1] : start + 1 / 60;
+  const gap = Math.max(0.0005, next - start);
+  let time = start + gap * 0.15;
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    time = Math.min(time, Math.max(0, durationSeconds - gap * 0.05));
+  }
+  return Math.max(0, time);
+}
+
 export function frameSeekTime(frame: number, fps: number, durationSeconds: number): number {
   if (!Number.isFinite(fps) || fps <= 0) return 0;
   const frameDuration = 1 / fps;
@@ -48,6 +67,7 @@ export class FrameSeeker {
   private running = false;
   private readonly media: SeekTarget;
   private fps: number;
+  private times: readonly number[] | null = null;
   private readonly seekTimeoutMs: number;
 
   constructor(media: SeekTarget, fps: number, seekTimeoutMs = 700) {
@@ -60,7 +80,13 @@ export class FrameSeeker {
     this.fps = fps;
   }
 
+  /** Presentation time of every real frame. Replaces the uniform fps grid. */
+  setClock(times: readonly number[] | null): void {
+    this.times = times && times.length > 0 ? times : null;
+  }
+
   get frameCount(): number {
+    if (this.times && this.times.length > 0) return this.times.length;
     return frameCountFor(this.media.duration, this.fps);
   }
 
@@ -103,7 +129,10 @@ export class FrameSeeker {
 
   private seekOnce(frame: number): Promise<void> {
     const media = this.media;
-    const time = frameSeekTime(frame, this.fps, media.duration);
+    const time =
+      this.times && frame >= 0 && frame < this.times.length
+        ? frameSeekTimeFromClock(this.times, frame, media.duration)
+        : frameSeekTime(frame, this.fps, media.duration);
     if (media.readyState >= 2 && Math.abs(media.currentTime - time) < 1e-4) {
       return Promise.resolve();
     }

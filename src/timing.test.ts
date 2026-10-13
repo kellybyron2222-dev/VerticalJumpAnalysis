@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { GRAVITY_M_S2, METERS_PER_INCH, computeTrialMetrics } from "./metrics.ts";
+import { IMG_0227_FRAME_TIMES } from "./img0227-times.ts";
 import {
   cadenceFromIntervals,
   estimateBoxHeight,
   estimateFrameInterval,
+  frameClockFromTicks,
+  measuredFps,
   mediaFrameRate,
   realSecondsFromMedia,
   rescaleFrame,
@@ -114,6 +117,20 @@ describe("sanityWarnings", () => {
   });
 });
 
+describe("frameClockFromTicks", () => {
+  it("drops repeat callbacks for the same frame", () => {
+    const clock = frameClockFromTicks([
+      { mediaTime: 0, presentedFrames: 1 },
+      { mediaTime: 0.0001, presentedFrames: 1 },
+      { mediaTime: 1 / 60, presentedFrames: 2 },
+      { mediaTime: 1 / 30, presentedFrames: 3 },
+      { mediaTime: 1 / 20, presentedFrames: 4 },
+    ]);
+    expect(clock).toEqual([0, 0.016667, 0.033333, 0.05]);
+    expect(measuredFps(clock!)).toBeCloseTo(60, 0);
+  });
+});
+
 describe("clip windows", () => {
   it("uses the slow middle, not the real-time opening", () => {
     const cadence = cadenceFromIntervals([1 / 240, 1 / 120]);
@@ -176,6 +193,47 @@ describe("estimateBoxHeight", () => {
     const airFrames = Math.round(fall * 240);
     const estimate = estimateBoxHeight(50, 51 + airFrames, 240);
     expect(estimate!.heightIn).toBeCloseTo(12, 0);
+  });
+
+  it("uses IMG_0227 timestamps instead of a fixed fps", () => {
+    // Frames read off the clip: last frame on the ~6 in box, first frame on
+    // the floor, takeoff, and landing. Times are that file's presentation clock.
+    const times = IMG_0227_FRAME_TIMES;
+    const stepOff = 45;
+    const touchdown = 52;
+    const takeoff = 76;
+    const landing = 94;
+    const box = estimateBoxHeight(stepOff, touchdown, 60, 1, times);
+    const jump = computeTrialMetrics({
+      touchdown,
+      takeoff,
+      landing,
+      fps: 60,
+      slowMoFactor: 1,
+      frameTimes: times,
+    });
+    expect(box).not.toBeNull();
+    expect(jump).not.toBeNull();
+    const fall = times[touchdown] - times[stepOff + 1];
+    expect(box!.fallSeconds).toBeCloseTo(fall, 6);
+    expect(box!.heightIn).toBeGreaterThan(4);
+    expect(box!.heightIn).toBeLessThan(8);
+    expect(jump!.flightMs).toBeGreaterThan(250);
+    expect(jump!.flightMs).toBeLessThan(700);
+    expect(jump!.heightIn).toBeGreaterThan(4);
+    expect(jump!.heightIn).toBeLessThan(20);
+    expect(jump!.gctMs).toBeCloseTo((times[takeoff] - times[touchdown]) * 1000, 4);
+    expect(jump!.rsi).toBeCloseTo(jump!.heightM / jump!.gctSeconds, 6);
+    // The same frame indexes divided by 60 or 240 are a different fall.
+    const by60 = (touchdown - (stepOff + 1)) / 60;
+    const by240 = (touchdown - (stepOff + 1)) / 240;
+    expect(Math.abs(box!.fallSeconds - by60)).toBeGreaterThan(0.05);
+    expect(Math.abs(box!.fallSeconds - by240)).toBeGreaterThan(0.05);
+    const fps = measuredFps(times);
+    expect(fps).toBeGreaterThan(30);
+    expect(fps).toBeLessThan(50);
+    expect(fps).not.toBe(60);
+    expect(fps).not.toBe(240);
   });
 
   it("rejects bad input", () => {

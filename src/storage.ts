@@ -38,6 +38,7 @@ export interface NewTrialInput {
   landingFrame: number;
   slowMoFactor?: number;
   stepOffFrame?: number | null;
+  frameTimes?: readonly number[];
   id?: string;
   createdAt?: string;
 }
@@ -90,6 +91,7 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
     landing: input.landingFrame,
     fps: input.fps,
     slowMoFactor: input.slowMoFactor,
+    frameTimes: input.frameTimes,
   });
   if (!metrics) return null;
   if (!Number.isFinite(input.boxHeightIn) || input.boxHeightIn <= 0) return null;

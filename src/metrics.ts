@@ -11,6 +11,8 @@ export interface MarkFrames {
   fps: number;
   /** Media seconds per real second. Omitted means real time (1). */
   slowMoFactor?: number;
+  /** Presentation time of each frame. When set, durations ignore fps. */
+  frameTimes?: readonly number[];
 }
 
 export interface TrialMetrics {
@@ -62,6 +64,30 @@ export function realSecondsBetween(
   return realSecondsFromMedia((endFrame - startFrame) / captureFps, slowMoFactor);
 }
 
+/**
+ * Real seconds between two frames. Presentation timestamps are the clock.
+ * `stretch` divides media time (1 = the timestamps are already real time).
+ * A fixed fps is only a fallback for a uniform grid with no timestamps.
+ */
+export function realSecondsOnClock(
+  frameTimes: readonly number[] | undefined,
+  startFrame: number,
+  endFrame: number,
+  captureFps: number,
+  stretch = 1,
+): number {
+  if (
+    frameTimes &&
+    startFrame >= 0 &&
+    endFrame < frameTimes.length &&
+    Number.isFinite(frameTimes[startFrame]) &&
+    Number.isFinite(frameTimes[endFrame])
+  ) {
+    return realSecondsFromMedia(frameTimes[endFrame] - frameTimes[startFrame], stretch);
+  }
+  return realSecondsBetween(startFrame, endFrame, captureFps, stretch);
+}
+
 export function metersToInches(meters: number): number {
   return meters / METERS_PER_INCH;
 }
@@ -89,8 +115,8 @@ export function computeTrialMetrics(input: MarkFrames): TrialMetrics | null {
   if (!(touchdown < takeoff && takeoff < landing)) return null;
 
   const factor = input.slowMoFactor ?? 1;
-  const gctSeconds = realSecondsBetween(touchdown, takeoff, fps, factor);
-  const flightSeconds = realSecondsBetween(takeoff, landing, fps, factor);
+  const gctSeconds = realSecondsOnClock(input.frameTimes, touchdown, takeoff, fps, factor);
+  const flightSeconds = realSecondsOnClock(input.frameTimes, takeoff, landing, fps, factor);
   const heightM = jumpHeightMeters(flightSeconds);
 
   return {
@@ -116,6 +142,7 @@ export function previewMetrics(input: {
   landing: number | null;
   fps: number;
   slowMoFactor?: number;
+  frameTimes?: readonly number[];
 }): MetricsPreview {
   const blank: MetricsPreview = {
     gctMs: null,
@@ -133,7 +160,14 @@ export function previewMetrics(input: {
   const { touchdown, takeoff, landing, fps } = input;
   const factor = input.slowMoFactor ?? 1;
   if (touchdown !== null && takeoff !== null && landing !== null) {
-    const metrics = computeTrialMetrics({ touchdown, takeoff, landing, fps, slowMoFactor: factor });
+    const metrics = computeTrialMetrics({
+      touchdown,
+      takeoff,
+      landing,
+      fps,
+      slowMoFactor: factor,
+      frameTimes: input.frameTimes,
+    });
     if (!metrics) {
       return {
         ...blank,
@@ -156,11 +190,11 @@ export function previewMetrics(input: {
   };
 
   if (touchdown !== null && takeoff !== null && validFrame(touchdown) && validFrame(takeoff) && takeoff > touchdown) {
-    preview.gctMs = realSecondsBetween(touchdown, takeoff, fps, factor) * 1000;
+    preview.gctMs = realSecondsOnClock(input.frameTimes, touchdown, takeoff, fps, factor) * 1000;
   }
 
   if (takeoff !== null && landing !== null && validFrame(takeoff) && validFrame(landing) && landing > takeoff) {
-    const flightSeconds = realSecondsBetween(takeoff, landing, fps, factor);
+    const flightSeconds = realSecondsOnClock(input.frameTimes, takeoff, landing, fps, factor);
     const heightM = jumpHeightMeters(flightSeconds);
     preview.flightMs = flightSeconds * 1000;
     preview.heightCm = metersToCentimeters(heightM);

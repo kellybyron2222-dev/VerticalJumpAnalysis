@@ -14,9 +14,9 @@ Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" bel
 
 iPhone slo-mo clips picked from the camera roll often arrive stretched in time: a 240 fps capture plays at 30 fps, so media time runs 8× slower than real time. Durations read from `currentTime` are then inflated (8× GCT and flight, 64× height, 8× RSI).
 
-- One conversion for every metric and the clock: `real seconds = (endFrame − startFrame) / capture fps / slowMoFactor`. `slowMoFactor` is media seconds per real second. Frame indexes stay on the capture-fps media grid. Changing the factor does not move marks (that would apply the factor twice).
-- Two inputs, both shown above the transport: capture frame rate (default 240) and slow-mo factor (chips 1×, 2×, 4×, 8×, any value ≥ 1).
-- Auto-detect on load samples the start and the middle (muted, 0.2×, `requestVideoFrameCallback`). Each window uses a low quantile of per-frame gaps so dropped display frames do not look like a faster clip. The slower window sets the factor (capture fps ÷ that fps, snapped to 1/2/4/8 within 15%), because iPhone slo-mo is often only the middle, with a ramp in and a ramp out. The faster window can confirm 240/120/60 capture when no marks exist yet. If the browser has no frame callbacks, the user picks the factor. A Detect button re-runs it.
+- One conversion for every metric and the clock: the difference of the two frames' presentation timestamps (`requestVideoFrameCallback` `mediaTime`), divided by an optional stretch (default 1). iPhone slo-mo files are variable-rate (a mix of about 1/60 s and 1/30 s), so frame index ÷ a fixed fps is wrong, and the container rate (often 60) is not the capture rate. The UI shows the average fps measured from those timestamps, not a guessed 60/120/240.
+- The stretch chips (1×, 2×, 4×, 8×) stay at 1 unless Byron taps one. They do not move marks.
+- On load the clip plays muted at 0.5× and the app records each frame's `mediaTime`. A Detect button re-runs it.
 - Sanity warning when jump height is over 40 in or under 2 in, contact time is outside 80–1000 ms, or the jump height and the box-height estimate disagree (jump more than 6× the box estimate, or the box estimate more than 8× the jump). A ramp stretches the drop and the flight by different amounts, so those two heights stop matching.
 
 ## Box height from video

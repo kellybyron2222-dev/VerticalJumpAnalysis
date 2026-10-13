@@ -1,9 +1,33 @@
-import { GRAVITY_M_S2, metersToCentimeters, metersToInches, realSecondsBetween } from "./metrics.ts";
+import { GRAVITY_M_S2, metersToCentimeters, metersToInches, realSecondsOnClock } from "./metrics.ts";
 
-export { realSecondsBetween, realSecondsFromMedia } from "./metrics.ts";
+export { realSecondsBetween, realSecondsFromMedia, realSecondsOnClock } from "./metrics.ts";
 
 /** Playback factors offered in the UI. 8× is a 240 fps clip stretched to play at 30 fps. */
 export const SLOW_MO_FACTORS = [1, 2, 4, 8] as const;
+
+/** Average frames per second across a measured presentation clock. */
+export function measuredFps(times: readonly number[]): number | null {
+  if (times.length < 2) return null;
+  const span = times[times.length - 1] - times[0];
+  if (!(span > 0)) return null;
+  return (times.length - 1) / span;
+}
+
+/**
+ * Strictly increasing presentation times from frame callbacks.
+ * Repeated callbacks for one frame (same mediaTime) are dropped.
+ */
+export function frameClockFromTicks(ticks: readonly FrameTick[]): number[] | null {
+  const times: number[] = [];
+  for (const tick of ticks) {
+    const time = tick.mediaTime;
+    if (!(time >= 0) || !Number.isFinite(time)) continue;
+    const rounded = Math.round(time * 1e6) / 1e6;
+    const prev = times.length > 0 ? times[times.length - 1] : -1;
+    if (rounded > prev + 0.0004) times.push(rounded);
+  }
+  return times.length >= 3 ? times : null;
+}
 
 /** One `requestVideoFrameCallback` reading while the clip plays. */
 export interface FrameTick {
@@ -129,10 +153,11 @@ export function estimateBoxHeight(
   touchdown: number,
   captureFps: number,
   slowMoFactor = 1,
+  frameTimes?: readonly number[],
 ): BoxEstimate | null {
-  if (!(captureFps > 0)) return null;
+  if (!frameTimes && !(captureFps > 0)) return null;
   if (!Number.isInteger(stepOff) || !Number.isInteger(touchdown) || stepOff < 0) return null;
-  const fallSeconds = realSecondsBetween(stepOff + 1, touchdown, captureFps, slowMoFactor);
+  const fallSeconds = realSecondsOnClock(frameTimes, stepOff + 1, touchdown, captureFps, slowMoFactor);
   if (!(fallSeconds > 0)) return null;
   const heightM = (GRAVITY_M_S2 * fallSeconds * fallSeconds) / 2;
   return {

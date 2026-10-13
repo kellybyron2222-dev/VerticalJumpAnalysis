@@ -1,4 +1,4 @@
-import { cadenceFromIntervals, estimateFrameInterval, type FrameTick } from "./timing.ts";
+import { frameClockFromTicks, type FrameTick } from "./timing.ts";
 
 interface FrameMetadata {
   mediaTime: number;
@@ -10,39 +10,22 @@ type FrameCallbackVideo = HTMLVideoElement & {
   cancelVideoFrameCallback?: (handle: number) => void;
 };
 
-const MAX_TICKS = 16;
-const MAX_WAIT_MS = 1200;
-/** Slow enough that a 240 fps clip still presents each frame on a 60 Hz screen. */
-const PROBE_RATE = 0.2;
-
-export interface ClipCadence {
-  /** Frames per media second in the slower window (the jump, in the middle). */
-  slowFps: number;
-  /** Frames per media second in the faster window (often the real-time opening). */
-  fastFps: number;
-}
-
 /**
- * Frame rate at the start and in the middle. iPhone slo-mo ramps: the opening
- * is often real time and only the middle is slow, so the opening alone reports 1×.
- * Null when the browser has no frame callbacks or playback is blocked.
+ * Presentation time of each frame, from playing the clip once.
+ * iPhone slo-mo files are variable-rate, so this list — not a fixed fps —
+ * is the clock. Null when the browser has no frame callbacks.
  */
-export async function measureClipCadence(video: HTMLVideoElement): Promise<ClipCadence | null> {
+export async function collectFrameTimes(video: HTMLVideoElement): Promise<number[] | null> {
   const media = video as FrameCallbackVideo;
   if (typeof media.requestVideoFrameCallback !== "function") return null;
 
   const previousRate = media.playbackRate;
   try {
     media.muted = true;
-    media.playbackRate = PROBE_RATE;
-    const start = await collectTicks(media);
-    let middle: FrameTick[] = [];
-    if (Number.isFinite(media.duration) && media.duration > 0.4) {
-      media.pause();
-      await seekMedia(media, media.duration * 0.5);
-      middle = await collectTicks(media);
-    }
-    return cadenceFromIntervals([estimateFrameInterval(start), estimateFrameInterval(middle)]);
+    media.playbackRate = 0.5;
+    await seekMedia(media, 0);
+    const ticks = await collectTicks(media, Number.isFinite(media.duration) ? media.duration : 0);
+    return frameClockFromTicks(ticks);
   } catch {
     return null;
   } finally {
@@ -51,8 +34,10 @@ export async function measureClipCadence(video: HTMLVideoElement): Promise<ClipC
   }
 }
 
-function collectTicks(media: FrameCallbackVideo): Promise<FrameTick[]> {
+function collectTicks(media: FrameCallbackVideo, duration: number): Promise<FrameTick[]> {
   const ticks: FrameTick[] = [];
+  const limit = duration > 0.05 ? duration - 0.02 : Number.POSITIVE_INFINITY;
+  const waitMs = duration > 0 ? Math.min(20000, (duration / 0.5) * 1000 + 2500) : 8000;
   let handle = 0;
   let settled = false;
   let finish: () => void = () => {};
@@ -64,18 +49,20 @@ function collectTicks(media: FrameCallbackVideo): Promise<FrameTick[]> {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    media.removeEventListener("ended", stop);
     media.cancelVideoFrameCallback?.(handle);
     finish();
   };
   const onFrame = (_now: number, metadata: FrameMetadata) => {
     if (settled) return;
     ticks.push({ mediaTime: metadata.mediaTime, presentedFrames: metadata.presentedFrames });
-    if (ticks.length >= MAX_TICKS) stop();
+    if (metadata.mediaTime >= limit) stop();
     else handle = media.requestVideoFrameCallback!(onFrame);
   };
 
+  media.addEventListener("ended", stop);
   handle = media.requestVideoFrameCallback!(onFrame);
-  timer = window.setTimeout(stop, MAX_WAIT_MS);
+  timer = window.setTimeout(stop, waitMs);
   return media
     .play()
     .then(() => finished)
