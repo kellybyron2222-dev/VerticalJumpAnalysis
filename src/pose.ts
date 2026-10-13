@@ -1,11 +1,5 @@
 import { FilesetResolver, PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
-import {
-  coarseFrames,
-  detectEvents,
-  refineFrames,
-  type Detection,
-  type FootSample,
-} from "./detect.ts";
+import { detectEvents, type Detection, type FootSample } from "./detect.ts";
 import type { FrameSeeker } from "./seek.ts";
 
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
@@ -15,7 +9,6 @@ const MODEL_URL =
 /** BlazePose indexes: ankles, heels, foot index (toes), left then right. */
 const FOOT_POINTS = [27, 29, 31, 28, 30, 32];
 const MIN_VISIBILITY = 0.5;
-const COARSE_STEP = 4;
 /** Longest edge of the frame passed to the model; fixed so runs are identical. */
 const INPUT_EDGE = 512;
 
@@ -83,26 +76,20 @@ export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return { ok: false, reason: "Canvas is not available." };
 
+  // Every presentation frame from the chosen file — not a 1-in-N subsample.
   const samples: FootSample[] = [];
-  const sample = async (frames: number[], label: string) => {
-    for (let i = 0; i < frames.length; i += 1) {
-      if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
-      await seeker.settle(frames[i]);
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const result = landmarker.detect(canvas);
-      const y = footY(result.landmarks[0]);
-      const upper = upperFootY(result.landmarks[0]);
-      if (y !== null) {
-        samples.push(upper === null ? { frame: frames[i], footY: y } : { frame: frames[i], footY: y, upperFootY: upper });
-      }
-      if (i % 8 === 0) onProgress(`${label} ${i + 1} / ${frames.length}`);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+    await seeker.settle(frame);
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const result = landmarker.detect(canvas);
+    const y = footY(result.landmarks[0]);
+    const upper = upperFootY(result.landmarks[0]);
+    if (y !== null) {
+      samples.push(upper === null ? { frame, footY: y } : { frame, footY: y, upperFootY: upper });
     }
-  };
+    if (frame % 8 === 0) onProgress(`Scanning ${frame + 1} / ${frameCount}`);
+  }
 
-  await sample(coarseFrames(frameCount, COARSE_STEP), "Scanning");
-  const coarse = detectEvents(samples);
-  if (!coarse.ok) return coarse;
-
-  await sample(refineFrames(coarse.events, COARSE_STEP, frameCount), "Refining");
-  return detectEvents(samples, coarse.model);
+  return detectEvents(samples);
 }

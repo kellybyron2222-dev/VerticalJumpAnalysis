@@ -6,7 +6,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, coarse scan then frame-by-frame refinement; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestones 3–5 are specified below and are not built.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestones 3–5 are specified below and are not built.
 
 Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built ahead of Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
