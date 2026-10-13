@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GRAVITY_M_S2, METERS_PER_INCH, computeTrialMetrics } from "./metrics.ts";
 import {
+  cadenceFromIntervals,
   estimateBoxHeight,
   estimateFrameInterval,
   mediaFrameRate,
@@ -8,6 +9,7 @@ import {
   rescaleFrame,
   sanityWarnings,
   slowMoFactorFor,
+  snapCaptureFps,
   type FrameTick,
 } from "./timing.ts";
 
@@ -64,20 +66,18 @@ describe("real time", () => {
     expect(mediaFrameRate(240, 1)).toBe(240);
   });
 
-  it("fixes the inflated readout from an 8x clip", () => {
-    // Marks placed on a 240-per-media-second grid in a clip stretched 8x.
-    const wrong = computeTrialMetrics({ touchdown: 800, takeoff: 2720, landing: 6560, fps: 240 });
-    const fixed = computeTrialMetrics({
-      touchdown: rescaleFrame(800, 1, 8),
-      takeoff: rescaleFrame(2720, 1, 8),
-      landing: rescaleFrame(6560, 1, 8),
-      fps: 240,
-    });
+  it("fixes the inflated readout from an 8x clip without moving the marks", () => {
+    // Marks sit on the capture-fps media grid. Dividing by the factor is the
+    // whole correction; rescaling the frames as well would halve it again.
+    const marks = { touchdown: 800, takeoff: 2720, landing: 6560, fps: 240 };
+    const wrong = computeTrialMetrics({ ...marks, slowMoFactor: 1 });
+    const fixed = computeTrialMetrics({ ...marks, slowMoFactor: 8 });
     expect(wrong?.gctMs).toBeCloseTo(8000, 6);
     expect(fixed?.gctMs).toBeCloseTo(1000, 6);
     expect(fixed?.flightMs).toBeCloseTo(2000, 6);
     expect(wrong!.heightM / fixed!.heightM).toBeCloseTo(64, 6);
     expect(wrong!.rsi / fixed!.rsi).toBeCloseTo(8, 6);
+    expect(fixed?.gctMs).toBeCloseTo((computeTrialMetrics(marks)?.gctMs ?? 0) / 8, 6);
   });
 
   it("rescales frames to the same moment", () => {
@@ -102,6 +102,27 @@ describe("sanityWarnings", () => {
     expect(sanityWarnings({ heightIn: 15, gctMs: 1001 })).toHaveLength(1);
     expect(sanityWarnings({ heightIn: 50, gctMs: 2000 })).toHaveLength(2);
   });
+
+  it("flags a jump and a box estimate that cannot both be real", () => {
+    expect(sanityWarnings({ heightIn: 15, gctMs: 250, boxHeightIn: 6 })).toEqual([]);
+    expect(sanityWarnings({ heightIn: 18, gctMs: 220, boxHeightIn: 12 })).toEqual([]);
+    const flagged = sanityWarnings({ heightIn: 245, gctMs: 400, boxHeightIn: 24 });
+    expect(flagged.some((warning) => /disagree/i.test(warning))).toBe(true);
+    expect(sanityWarnings({ heightIn: 12, gctMs: 250, boxHeightIn: 120 }).some((warning) => /disagree/i.test(warning))).toBe(
+      true,
+    );
+  });
+});
+
+describe("clip windows", () => {
+  it("uses the slow middle, not the real-time opening", () => {
+    const cadence = cadenceFromIntervals([1 / 240, 1 / 120]);
+    expect(cadence).toEqual({ fastFps: 240, slowFps: 120 });
+    expect(slowMoFactorFor(snapCaptureFps(cadence!.fastFps) ?? 0, cadence!.slowFps)).toBe(2);
+    expect(cadenceFromIntervals([null, null])).toBeNull();
+    expect(snapCaptureFps(30)).toBeNull();
+    expect(snapCaptureFps(232)).toBe(240);
+  });
 });
 
 describe("estimateBoxHeight", () => {
@@ -113,6 +134,41 @@ describe("estimateBoxHeight", () => {
     expect(estimate!.heightM).toBeCloseTo((GRAVITY_M_S2 * 0.09) / 2, 10);
     expect(estimate!.heightIn).toBeCloseTo(estimate!.heightM / METERS_PER_INCH, 10);
     expect(estimate!.heightCm).toBeCloseTo(estimate!.heightM * 100, 10);
+  });
+
+  it("corrects a 6 in box filmed with a 2x stretch", () => {
+    // Synthetic timings: the media grid has twice as many frames as real time,
+    // so an uncorrected fall reads about 24 in (height scales with t²).
+    const fall = Math.sqrt((2 * 6 * METERS_PER_INCH) / GRAVITY_M_S2);
+    const airFrames = Math.round(fall * 240 * 2);
+    const stepOff = 100;
+    const touchdown = stepOff + 1 + airFrames;
+    const raw = estimateBoxHeight(stepOff, touchdown, 240, 1);
+    const fixed = estimateBoxHeight(stepOff, touchdown, 240, 2);
+    expect(raw).not.toBeNull();
+    expect(fixed).not.toBeNull();
+    expect(raw!.heightIn).toBeCloseTo(24, 0);
+    expect(fixed!.heightIn).toBeCloseTo(6, 0);
+    expect(raw!.heightIn / fixed!.heightIn).toBeCloseTo(4, 1);
+
+    const jump = computeTrialMetrics({
+      touchdown,
+      takeoff: touchdown + airFrames,
+      landing: touchdown + airFrames * 2,
+      fps: 240,
+      slowMoFactor: 2,
+    });
+    const jumpRaw = computeTrialMetrics({
+      touchdown,
+      takeoff: touchdown + airFrames,
+      landing: touchdown + airFrames * 2,
+      fps: 240,
+      slowMoFactor: 1,
+    });
+    expect(jump!.flightSeconds * 2).toBeCloseTo(jumpRaw!.flightSeconds, 8);
+    expect(jumpRaw!.heightM / jump!.heightM).toBeCloseTo(4, 5);
+    expect(jump!.rsi * 2).toBeCloseTo(jumpRaw!.rsi, 5);
+    expect(jump!.gctSeconds).toBeCloseTo(fixed!.fallSeconds, 8);
   });
 
   it("recovers a 12 in box", () => {

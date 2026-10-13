@@ -9,6 +9,8 @@ export interface MarkFrames {
   takeoff: number;
   landing: number;
   fps: number;
+  /** Media seconds per real second. Omitted means real time (1). */
+  slowMoFactor?: number;
 }
 
 export interface TrialMetrics {
@@ -34,6 +36,30 @@ export interface MetricsPreview {
 
 export function jumpHeightMeters(flightTimeSeconds: number): number {
   return (GRAVITY_M_S2 * flightTimeSeconds * flightTimeSeconds) / 8;
+}
+
+/**
+ * Media seconds → real seconds. `slowMoFactor` is media seconds per real
+ * second (8 when a 240 fps capture plays back at 30 fps).
+ */
+export function realSecondsFromMedia(mediaSeconds: number, slowMoFactor: number): number {
+  return slowMoFactor > 0 ? mediaSeconds / slowMoFactor : mediaSeconds;
+}
+
+/**
+ * Real seconds between two frames. Frame indexes sit on the capture-fps
+ * media grid (the scrubber). Every contact, flight, height, RSI, and box
+ * duration goes through here, so a slow-mo factor cannot be applied to
+ * one metric and skipped on another.
+ */
+export function realSecondsBetween(
+  startFrame: number,
+  endFrame: number,
+  captureFps: number,
+  slowMoFactor = 1,
+): number {
+  if (!(captureFps > 0)) return Number.NaN;
+  return realSecondsFromMedia((endFrame - startFrame) / captureFps, slowMoFactor);
 }
 
 export function metersToInches(meters: number): number {
@@ -62,8 +88,9 @@ export function computeTrialMetrics(input: MarkFrames): TrialMetrics | null {
   if (!validFrame(touchdown) || !validFrame(takeoff) || !validFrame(landing)) return null;
   if (!(touchdown < takeoff && takeoff < landing)) return null;
 
-  const gctSeconds = (takeoff - touchdown) / fps;
-  const flightSeconds = (landing - takeoff) / fps;
+  const factor = input.slowMoFactor ?? 1;
+  const gctSeconds = realSecondsBetween(touchdown, takeoff, fps, factor);
+  const flightSeconds = realSecondsBetween(takeoff, landing, fps, factor);
   const heightM = jumpHeightMeters(flightSeconds);
 
   return {
@@ -88,6 +115,7 @@ export function previewMetrics(input: {
   takeoff: number | null;
   landing: number | null;
   fps: number;
+  slowMoFactor?: number;
 }): MetricsPreview {
   const blank: MetricsPreview = {
     gctMs: null,
@@ -103,8 +131,9 @@ export function previewMetrics(input: {
   }
 
   const { touchdown, takeoff, landing, fps } = input;
+  const factor = input.slowMoFactor ?? 1;
   if (touchdown !== null && takeoff !== null && landing !== null) {
-    const metrics = computeTrialMetrics({ touchdown, takeoff, landing, fps });
+    const metrics = computeTrialMetrics({ touchdown, takeoff, landing, fps, slowMoFactor: factor });
     if (!metrics) {
       return {
         ...blank,
@@ -127,11 +156,11 @@ export function previewMetrics(input: {
   };
 
   if (touchdown !== null && takeoff !== null && validFrame(touchdown) && validFrame(takeoff) && takeoff > touchdown) {
-    preview.gctMs = ((takeoff - touchdown) / fps) * 1000;
+    preview.gctMs = realSecondsBetween(touchdown, takeoff, fps, factor) * 1000;
   }
 
   if (takeoff !== null && landing !== null && validFrame(takeoff) && validFrame(landing) && landing > takeoff) {
-    const flightSeconds = (landing - takeoff) / fps;
+    const flightSeconds = realSecondsBetween(takeoff, landing, fps, factor);
     const heightM = jumpHeightMeters(flightSeconds);
     preview.flightMs = flightSeconds * 1000;
     preview.heightCm = metersToCentimeters(heightM);

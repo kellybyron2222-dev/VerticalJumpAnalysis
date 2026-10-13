@@ -89,6 +89,7 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
     takeoff: input.takeoffFrame,
     landing: input.landingFrame,
     fps: input.fps,
+    slowMoFactor: input.slowMoFactor,
   });
   if (!metrics) return null;
   if (!Number.isFinite(input.boxHeightIn) || input.boxHeightIn <= 0) return null;

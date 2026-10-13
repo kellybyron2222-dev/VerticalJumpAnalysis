@@ -17,17 +17,11 @@ import {
   formatRsi,
 } from "./format.ts";
 import { trialFormError } from "./form.ts";
-import { measureClipFps } from "./cadence.ts";
+import { measureClipCadence } from "./cadence.ts";
 import { analyzeClip } from "./pose.ts";
-import { previewMetrics } from "./metrics.ts";
+import { previewMetrics, realSecondsBetween } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
-import {
-  estimateBoxHeight,
-  mediaFrameRate,
-  rescaleFrame,
-  sanityWarnings,
-  slowMoFactorFor,
-} from "./timing.ts";
+import { estimateBoxHeight, sanityWarnings, slowMoFactorFor, snapCaptureFps } from "./timing.ts";
 import {
   createTrial,
   loadTrials,
@@ -68,6 +62,7 @@ const detectStatus = must<HTMLElement>("#detect-status");
 const slowInput = must<HTMLInputElement>("#slowmo");
 const cadenceButton = must<HTMLButtonElement>("#detect-cadence");
 const cadenceStatus = must<HTMLElement>("#cadence-status");
+const timingReadout = must<HTMLElement>("#timing-readout");
 const boxEstimate = must<HTMLElement>("#box-estimate");
 const metricsWarning = must<HTMLElement>("#metrics-warning");
 
@@ -77,7 +72,7 @@ video.setAttribute("webkit-playsinline", "");
 video.muted = true;
 video.controls = false;
 
-const seeker = new FrameSeeker(video, mediaFrameRate(readFps() ?? 240, readFactor()));
+const seeker = new FrameSeeker(video, readFps() ?? 240);
 
 const marks = {
   stepOff: null as number | null,
@@ -174,7 +169,7 @@ fpsInput.addEventListener("input", () => {
     render();
     return;
   }
-  seeker.setFps(mediaFrameRate(fps, factor));
+  seeker.setFps(fps);
   if (ready) setFrame(frame);
   else render();
   maybePrefillBox();
@@ -309,21 +304,28 @@ async function detectCadence(): Promise<void> {
   setTransportEnabled(false);
   cadenceStatus.textContent = "Reading the clip's frame rate…";
   try {
-    const clipFps = await measureClipFps(video);
+    const cadence = await measureClipCadence(video);
     if (url !== objectUrl) return;
-    const capture = readFps();
-    if (clipFps === null || capture === null) {
+    let capture = readFps();
+    if (cadence === null || capture === null) {
       cadenceStatus.textContent =
-        "Could not read the clip's frame rate here. If the clip plays slowly, pick 4× or 8×.";
+        "Could not read the clip's frame rate here. If the clip plays slowly, pick 2×, 4×, or 8×.";
       return;
     }
-    const detected = slowMoFactorFor(capture, clipFps);
+    const snapped = snapCaptureFps(cadence.fastFps);
+    const marksEmpty = marks.stepOff === null && marks.touchdown === null && marks.takeoff === null && marks.landing === null;
+    if (snapped !== null && snapped !== capture && marksEmpty) {
+      fpsInput.value = String(snapped);
+      seeker.setFps(snapped);
+      capture = snapped;
+    }
+    const detected = slowMoFactorFor(capture, cadence.slowFps);
     slowInput.value = String(detected);
     applyFactor(detected);
-    cadenceStatus.textContent =
-      detected === 1
-        ? `Clip plays at ${clipFps.toFixed(0)} fps, so it is real time (1×).`
-        : `Clip plays at ${clipFps.toFixed(0)} fps, so ${capture} fps capture is ${detected}× slow-mo. Times are converted to real seconds.`;
+    const uneven = Math.abs(cadence.fastFps - cadence.slowFps) / cadence.fastFps > 0.15;
+    cadenceStatus.textContent = uneven
+      ? `Detected ${capture} fps capture and ${detected}× slow-mo. The start plays at ${cadence.fastFps.toFixed(0)} fps and the middle at ${cadence.slowFps.toFixed(0)} fps, so only part of the clip is slow. If the box and the jump still disagree, tap another factor.`
+      : `Detected ${capture} fps capture and ${detected}× slow-mo (clip plays at ${cadence.slowFps.toFixed(0)} fps). Times are real seconds.`;
   } finally {
     measuring = false;
     if (ready && url === objectUrl) {
@@ -333,21 +335,15 @@ async function detectCadence(): Promise<void> {
   }
 }
 
-/** Keeps marks on the same video moments; only the real-time scale changes. */
+/**
+ * Marks stay on the same frame. The factor only changes real-seconds conversion,
+ * so tapping 2×/4×/8× does not move the picture and cannot be applied twice.
+ */
 function applyFactor(next: number): void {
   if (!(next >= 1) || next === factor) return;
-  for (const key of Object.keys(marks) as Array<keyof typeof marks>) {
-    const value = marks[key];
-    if (value !== null) marks[key] = rescaleFrame(value, factor, next);
-  }
-  frame = rescaleFrame(frame, factor, next);
   factor = next;
-  seeker.setFps(mediaFrameRate(readFps() ?? 240, factor));
   clearFeedback();
-  if (ready) {
-    scrubber.max = String(Math.max(0, seeker.frameCount - 1));
-    setFrame(frame);
-  } else render();
+  render();
   maybePrefillBox();
 }
 
@@ -356,7 +352,7 @@ function maybePrefillBox(): void {
   const fps = readFps();
   if (fps === null || marks.stepOff === null || marks.touchdown === null) return;
   if (boxInput.value.trim() !== "" && !boxAutoFilled) return;
-  const estimate = estimateBoxHeight(marks.stepOff, marks.touchdown, fps);
+  const estimate = estimateBoxHeight(marks.stepOff, marks.touchdown, fps, factor);
   if (!estimate) return;
   boxInput.value = String(Math.round(estimate.heightIn * 2) / 2);
   boxAutoFilled = true;
@@ -460,7 +456,9 @@ function render(): void {
   const count = fps === null ? 0 : seeker.frameCount;
   frameLabel.textContent = String(frame);
   totalLabel.textContent = String(count);
-  timeLabel.textContent = fps === null ? "—" : formatClock(frame / fps);
+  timeLabel.textContent = fps === null ? "—" : formatClock(realSecondsBetween(0, frame, fps, factor));
+  timingReadout.textContent =
+    fps === null ? "Set a capture frame rate." : `Capture ${fps} fps · ${formatFactor(factor)}× slow-mo`;
   if (document.activeElement !== scrubber) {
     scrubber.max = String(Math.max(0, count - 1));
     scrubber.value = String(count > 0 ? clampFrame(frame, count) : 0);
@@ -481,6 +479,7 @@ function render(): void {
     takeoff: marks.takeoff,
     landing: marks.landing,
     fps: fps ?? 0,
+    slowMoFactor: factor,
   });
   const anyNumber =
     preview.gctMs !== null || preview.flightMs !== null || preview.heightIn !== null || preview.rsi !== null;
@@ -494,15 +493,19 @@ function render(): void {
     preview.heightCm === null ? "—" : formatHeightCm(preview.heightCm);
   must<HTMLElement>("#m-rsi").textContent = preview.rsi === null ? "—" : formatRsi(preview.rsi);
 
-  const warnings = sanityWarnings({ heightIn: preview.heightIn, gctMs: preview.gctMs });
+  const estimate =
+    fps === null || marks.stepOff === null || marks.touchdown === null
+      ? null
+      : estimateBoxHeight(marks.stepOff, marks.touchdown, fps, factor);
+  const warnings = sanityWarnings({
+    heightIn: preview.heightIn,
+    gctMs: preview.gctMs,
+    boxHeightIn: estimate?.heightIn ?? null,
+  });
   metricsWarning.hidden = warnings.length === 0;
   metricsWarning.textContent =
     warnings.length === 0 ? "" : `${warnings.join(" ")} Check the slow-mo factor, the frame rate, and the marks.`;
 
-  const estimate =
-    fps === null || marks.stepOff === null || marks.touchdown === null
-      ? null
-      : estimateBoxHeight(marks.stepOff, marks.touchdown, fps);
   boxEstimate.hidden = estimate === null;
   boxEstimate.textContent =
     estimate === null
@@ -651,6 +654,13 @@ function syncChips(): void {
   for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips button")) {
     chip.setAttribute("aria-pressed", String(chip.dataset.height === current));
   }
+  for (const chip of document.querySelectorAll<HTMLButtonElement>("#slowmo-chips button[data-factor]")) {
+    chip.setAttribute("aria-pressed", String(Number(chip.dataset.factor) === factor));
+  }
+}
+
+function formatFactor(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 10) / 10);
 }
 
 function clearFeedback(): void {

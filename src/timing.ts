@@ -1,7 +1,9 @@
-import { GRAVITY_M_S2, metersToCentimeters, metersToInches } from "./metrics.ts";
+import { GRAVITY_M_S2, metersToCentimeters, metersToInches, realSecondsBetween } from "./metrics.ts";
+
+export { realSecondsBetween, realSecondsFromMedia } from "./metrics.ts";
 
 /** Playback factors offered in the UI. 8× is a 240 fps clip stretched to play at 30 fps. */
-export const SLOW_MO_FACTORS = [1, 4, 8] as const;
+export const SLOW_MO_FACTORS = [1, 2, 4, 8] as const;
 
 /** One `requestVideoFrameCallback` reading while the clip plays. */
 export interface FrameTick {
@@ -40,27 +42,53 @@ export function slowMoFactorFor(captureFps: number, clipFps: number): number {
   return Math.max(1, Math.round(ratio * 10) / 10);
 }
 
-/**
- * Frames per media second on the capture grid. Frame indexes always count
- * real captured frames, so `frame / captureFps` is real seconds.
- */
+/** captureFps / slowMoFactor. The scrubber stays on capture fps; metrics do not use this. */
 export function mediaFrameRate(captureFps: number, slowMoFactor: number): number {
   if (!(captureFps > 0) || !(slowMoFactor > 0)) return 0;
   return captureFps / slowMoFactor;
 }
 
-export function realSecondsFromMedia(mediaSeconds: number, slowMoFactor: number): number {
-  return slowMoFactor > 0 ? mediaSeconds / slowMoFactor : mediaSeconds;
+/**
+ * Frame rate of the faster window, snapped to a capture rate iPhones actually
+ * shoot. A fully stretched 30 fps file does not reveal capture rate; returns null.
+ */
+export function snapCaptureFps(clipFps: number): number | null {
+  if (!(clipFps > 0)) return null;
+  for (const rate of [240, 120, 60]) {
+    if (Math.abs(clipFps - rate) / rate <= 0.15) return rate;
+  }
+  return null;
 }
 
-/** Keeps a frame on the same video moment when the slow-mo factor changes. */
+/**
+ * Slow-mo lives in the middle of an iPhone clip; the opening is often real time.
+ * Each interval is already a low quantile, so the longer one is the slow region
+ * rather than a dropped display frame.
+ */
+export function cadenceFromIntervals(
+  intervals: readonly (number | null)[],
+): { slowFps: number; fastFps: number } | null {
+  const good = intervals.filter((value): value is number => value !== null && Number.isFinite(value) && value > 0);
+  if (good.length === 0) return null;
+  return { slowFps: 1 / Math.max(...good), fastFps: 1 / Math.min(...good) };
+}
+
+/** Keeps a frame on the same video moment when the seek grid changes. */
 export function rescaleFrame(frame: number, fromFactor: number, toFactor: number): number {
   if (!(fromFactor > 0) || !(toFactor > 0)) return frame;
   return Math.max(0, Math.round((frame * fromFactor) / toFactor));
 }
 
-/** Plain-language warnings for numbers that are physically unlikely. */
-export function sanityWarnings(input: { heightIn: number | null; gctMs: number | null }): string[] {
+/**
+ * Plain-language warnings for numbers that are physically unlikely.
+ * `boxHeightIn` is the video estimate. A uniform stretch scales both heights
+ * the same way; a ramp (slow only in the middle) makes them disagree.
+ */
+export function sanityWarnings(input: {
+  heightIn: number | null;
+  gctMs: number | null;
+  boxHeightIn?: number | null;
+}): string[] {
   const warnings: string[] = [];
   if (input.heightIn !== null) {
     if (input.heightIn > 40) warnings.push("Jump height is over 40 in.");
@@ -68,6 +96,18 @@ export function sanityWarnings(input: { heightIn: number | null; gctMs: number |
   }
   if (input.gctMs !== null && (input.gctMs < 80 || input.gctMs > 1000)) {
     warnings.push("Contact time is outside 80–1000 ms.");
+  }
+  const box = input.boxHeightIn ?? null;
+  if (
+    box !== null &&
+    input.heightIn !== null &&
+    box >= 2 &&
+    input.heightIn >= 2 &&
+    (input.heightIn > box * 6 || box > input.heightIn * 8)
+  ) {
+    warnings.push(
+      "Jump height and the box-height estimate disagree, so the drop and the flight may be on different slow-mo speeds.",
+    );
   }
   return warnings;
 }
@@ -84,12 +124,16 @@ export interface BoxEstimate {
  * on the box and `touchdown` the first frame on the floor, so the airborne
  * frames are `stepOff + 1 … touchdown − 1`, counted the same way as flight time.
  */
-export function estimateBoxHeight(stepOff: number, touchdown: number, captureFps: number): BoxEstimate | null {
+export function estimateBoxHeight(
+  stepOff: number,
+  touchdown: number,
+  captureFps: number,
+  slowMoFactor = 1,
+): BoxEstimate | null {
   if (!(captureFps > 0)) return null;
   if (!Number.isInteger(stepOff) || !Number.isInteger(touchdown) || stepOff < 0) return null;
-  const airFrames = touchdown - (stepOff + 1);
-  if (airFrames <= 0) return null;
-  const fallSeconds = airFrames / captureFps;
+  const fallSeconds = realSecondsBetween(stepOff + 1, touchdown, captureFps, slowMoFactor);
+  if (!(fallSeconds > 0)) return null;
   const heightM = (GRAVITY_M_S2 * fallSeconds * fallSeconds) / 2;
   return {
     fallSeconds,

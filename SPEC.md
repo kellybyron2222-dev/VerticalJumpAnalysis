@@ -14,16 +14,15 @@ Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" bel
 
 iPhone slo-mo clips picked from the camera roll often arrive stretched in time: a 240 fps capture plays at 30 fps, so media time runs 8× slower than real time. Durations read from `currentTime` are then inflated (8× GCT and flight, 64× height, 8× RSI).
 
-- Frame indexes always count real captured frames. `frame / capture fps` is real seconds. All metrics use that.
-- Two inputs: capture frame rate (default 240) and slow-mo playback factor (media seconds per real second; chips 1×, 4×, 8×, any value ≥ 1 allowed). Seeking uses `capture fps / factor` frames per media second.
-- Auto-detect on load: play the clip muted at 0.2× and read `requestVideoFrameCallback` `mediaTime`/`presentedFrames`. A low quantile of the per-frame gaps is the clip's frame interval (dropped display frames only make gaps longer). Factor = capture fps ÷ clip fps, snapped to 1/2/4/8 within 15%. If the browser has no frame callbacks, the user picks the factor. A Detect button re-runs it.
-- Changing the factor keeps existing marks on the same video moment (frames are rescaled by old factor ÷ new factor).
-- Sanity warning when jump height is over 40 in or under 2 in, or contact time is outside 80–1000 ms.
+- One conversion for every metric and the clock: `real seconds = (endFrame − startFrame) / capture fps / slowMoFactor`. `slowMoFactor` is media seconds per real second. Frame indexes stay on the capture-fps media grid. Changing the factor does not move marks (that would apply the factor twice).
+- Two inputs, both shown above the transport: capture frame rate (default 240) and slow-mo factor (chips 1×, 2×, 4×, 8×, any value ≥ 1).
+- Auto-detect on load samples the start and the middle (muted, 0.2×, `requestVideoFrameCallback`). Each window uses a low quantile of per-frame gaps so dropped display frames do not look like a faster clip. The slower window sets the factor (capture fps ÷ that fps, snapped to 1/2/4/8 within 15%), because iPhone slo-mo is often only the middle, with a ramp in and a ramp out. The faster window can confirm 240/120/60 capture when no marks exist yet. If the browser has no frame callbacks, the user picks the factor. A Detect button re-runs it.
+- Sanity warning when jump height is over 40 in or under 2 in, contact time is outside 80–1000 ms, or the jump height and the box-height estimate disagree (jump more than 6× the box estimate, or the box estimate more than 8× the jump). A ramp stretches the drop and the flight by different amounts, so those two heights stop matching.
 
 ## Box height from video
 
 - A fourth, optional mark: step-off, the last frame with both feet on the box. Auto-detect finds it from the pose (the higher foot reaching box level, read from the first tenth of the clip, with a tight tolerance); it is hand-correctable like the other marks.
-- Free fall: airborne frames `stepOff + 1 … touchdown − 1`, so `t = (touchdown − stepOff − 1) / capture fps`, and `box height = g × t² / 2`.
+- Free fall: airborne frames `stepOff + 1 … touchdown − 1`, so `t = (touchdown − stepOff − 1) / capture fps / slowMoFactor`, and `box height = g × t² / 2`.
 - Shown in inches and centimeters and labeled as an estimate. It pre-fills the box height field (rounded to 0.5 in) unless the user has typed or picked a value; the field stays editable.
 
 ## UI wording

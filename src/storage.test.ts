@@ -68,6 +68,26 @@ describe("createTrial", () => {
     expect(trial.rsi).toBeCloseTo(trial.heightM / 0.25, 10);
   });
 
+  it("stores metrics with the slow-mo factor applied once", () => {
+    const trial = createTrial({
+      id: "stretched",
+      createdAt: "2026-10-13T18:00:00.000Z",
+      fps: 240,
+      jumpType: "drop",
+      boxHeightIn: 6,
+      armSwing: false,
+      notes: "",
+      touchdownFrame: 0,
+      takeoffFrame: 120,
+      landingFrame: 240,
+      slowMoFactor: 2,
+    });
+    expect(trial).not.toBeNull();
+    expect(trial!.gctMs).toBeCloseTo(250, 6);
+    expect(trial!.flightMs).toBeCloseTo(250, 6);
+    expect(trial!.slowMoFactor).toBe(2);
+  });
+
   it("refuses a trial that is not a real jump", () => {
     expect(
       createTrial({
