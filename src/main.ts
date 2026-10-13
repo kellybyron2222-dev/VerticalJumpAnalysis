@@ -15,6 +15,7 @@ import {
   formatRsi,
 } from "./format.ts";
 import { trialFormError } from "./form.ts";
+import { analyzeClip } from "./pose.ts";
 import { previewMetrics } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
 import {
@@ -51,6 +52,9 @@ const saveStatus = must<HTMLElement>("#save-status");
 const savedCount = must<HTMLElement>("#saved-count");
 const savedEmpty = must<HTMLElement>("#saved-empty");
 const trialList = must<HTMLUListElement>("#trial-list");
+const autoButton = must<HTMLButtonElement>("#auto-detect");
+const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
+const detectStatus = must<HTMLElement>("#detect-status");
 
 video.playsInline = true;
 video.setAttribute("playsinline", "");
@@ -70,6 +74,12 @@ let frame = 0;
 let ready = false;
 let objectUrl: string | null = null;
 let pendingDeleteId: string | null = null;
+let detecting: AbortController | null = null;
+
+autoButton.addEventListener("click", () => {
+  void runDetection();
+});
+cancelDetect.addEventListener("click", () => detecting?.abort());
 
 must<HTMLButtonElement>("#dismiss-guide").addEventListener("click", showAnalyze);
 must<HTMLButtonElement>("#open-guide").addEventListener("click", () => {
@@ -184,6 +194,11 @@ function closeMenu(): void {
 }
 
 function loadFile(file: File): void {
+  detecting?.abort();
+  detecting = null;
+  fpsInput.disabled = false;
+  cancelDetect.hidden = true;
+  detectStatus.textContent = "";
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
   ready = false;
@@ -232,12 +247,63 @@ function onReady(): void {
   seeker.request(frame);
 }
 
+async function runDetection(): Promise<void> {
+  const fps = readFps();
+  const count = seeker.frameCount;
+  if (!ready || detecting || fps === null || count <= 0) return;
+  const controller = new AbortController();
+  detecting = controller;
+  setTransportEnabled(false);
+  fpsInput.disabled = true;
+  cancelDetect.hidden = false;
+  clearFeedback();
+  try {
+    const result = await analyzeClip({
+      video,
+      seeker,
+      frameCount: count,
+      signal: controller.signal,
+      onProgress: (message) => {
+        detectStatus.textContent = message;
+      },
+    });
+    if (controller.signal.aborted) {
+      detectStatus.textContent = "Auto-detect cancelled.";
+      return;
+    }
+    if (!result.ok) {
+      detectStatus.textContent = `Auto-detect failed: ${result.reason} Mark the frames by hand.`;
+      return;
+    }
+    marks.touchdown = result.events.touchdown;
+    marks.takeoff = result.events.takeoff;
+    marks.landing = result.events.landing;
+    frame = result.events.touchdown;
+    detectStatus.textContent =
+      "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
+  } catch (error) {
+    if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
+    else detectStatus.textContent = `Auto-detect failed: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    if (detecting === controller) {
+      detecting = null;
+      fpsInput.disabled = false;
+      cancelDetect.hidden = true;
+      if (ready) {
+        setTransportEnabled(true);
+        setFrame(frame);
+      }
+    }
+  }
+}
+
 function step(delta: number): void {
-  if (!ready) return;
+  if (!ready || detecting) return;
   setFrame(frame + delta);
 }
 
 function setFrame(next: number): void {
+  if (detecting) return;
   const count = seeker.frameCount;
   frame = count > 0 ? clampFrame(next, count) : Math.max(0, Math.round(next));
   clearFeedback();
@@ -457,6 +523,7 @@ function clearFeedback(): void {
 function setTransportEnabled(enabled: boolean): void {
   for (const button of stepButtons) button.disabled = !enabled;
   scrubber.disabled = !enabled;
+  autoButton.disabled = !enabled;
   for (const id of ["#set-td", "#set-to", "#set-ld"]) {
     must<HTMLButtonElement>(id).disabled = !enabled;
   }

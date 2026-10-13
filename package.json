@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.8",
-    "@fontsource/outfit": "^5.2.8"
+    "@fontsource/outfit": "^5.2.8",
+    "@mediapipe/tasks-vision": "^1.1.0"
   },
   "devDependencies": {
     "typescript": "~6.0.2",

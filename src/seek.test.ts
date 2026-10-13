@@ -150,6 +150,20 @@ describe("FrameSeeker", () => {
     }
   });
 
+  it("settle resolves only after the frame's seeked event", async () => {
+    const media = new FakeMedia();
+    const seeker = new FrameSeeker(media, 240, 700);
+    let done = false;
+    const settled = seeker.settle(6).then(() => {
+      done = true;
+    });
+    await flush();
+    expect(done).toBe(false);
+    media.fireSeeked();
+    await settled;
+    expect(media.currentTime).toBeCloseTo(frameSeekTime(6, 240, 1), 10);
+  });
+
   it("ignores seeks before the duration is known", () => {
     const media = new FakeMedia();
     media.duration = Number.NaN;

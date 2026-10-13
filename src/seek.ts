@@ -72,6 +72,15 @@ export class FrameSeeker {
     void this.drain();
   }
 
+  /** Seeks to `frame` and resolves once the queue is idle on the newest request. */
+  settle(frame: number): Promise<void> {
+    this.request(frame);
+    if (!this.running) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.push(resolve));
+  }
+
+  private idleWaiters: Array<() => void> = [];
+
   private async drain(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -84,6 +93,11 @@ export class FrameSeeker {
     } finally {
       this.running = false;
       if (this.queued !== null) void this.drain();
+      else {
+        const waiters = this.idleWaiters;
+        this.idleWaiters = [];
+        for (const resolve of waiters) resolve();
+      }
     }
   }
 
