@@ -91,9 +91,10 @@ export class FrameSeeker {
   }
 
   request(frame: number): void {
-    if (!Number.isFinite(this.fps) || this.fps <= 0) return;
     const count = this.frameCount;
     if (count <= 0) return;
+    // A presentation clock can seek without a fps grid; fps is only the fallback.
+    if (!this.times && (!Number.isFinite(this.fps) || this.fps <= 0)) return;
     this.queued = clampFrame(frame, count);
     void this.drain();
   }

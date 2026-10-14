@@ -58,6 +58,18 @@ export function captureFps(times: readonly number[]): number | null {
 }
 
 /**
+ * Stretch used for metrics. A UI factor of 1 must not leave iPhone slo-mo
+ * playback timestamps uncorrected — that is exactly the 231 in / 850 ms bug.
+ * An explicit user choice (uiFactor !== 1, or uiFactor matching detection) wins.
+ */
+export function metricStretch(frameTimes: readonly number[] | undefined, uiFactor: number): number {
+  const detected = frameTimes ? sloMoStretch(frameTimes) : 1;
+  if (!(uiFactor > 0)) return detected > 1 ? detected : 1;
+  if (detected > 1 && uiFactor === 1) return detected;
+  return uiFactor;
+}
+
+/**
  * Pose marks step-off once the foot has visibly dropped. A free fall covers
  * the first quarter of its distance in the first half of the time, so the
  * visible gap is about half the real drop. Repeat that gap once, backward.
@@ -65,6 +77,39 @@ export function captureFps(times: readonly number[]): number | null {
 export function slowFallStepOff(stepOff: number, touchdown: number): number {
   if (!(touchdown > stepOff)) return stepOff;
   return Math.max(0, stepOff - (touchdown - stepOff));
+}
+
+/**
+ * When pose never sees a clear box stance (step-off 0 / null), place step-off
+ * so free fall is about 0.18 s of real time (~6 in). Uses the playback clock
+ * and stretch so the seek index matches the video.
+ */
+export function stepOffForFall(
+  stepOff: number | null,
+  touchdown: number,
+  frameTimes: readonly number[] | undefined,
+  stretch: number,
+  targetFallSeconds = Math.sqrt((2 * 6 * 0.0254) / 9.80665),
+): number | null {
+  const visible = stepOff === null ? null : slowFallStepOff(stepOff, touchdown);
+  if (!frameTimes || !(stretch > 0) || !(touchdown > 0) || touchdown >= frameTimes.length) {
+    return visible;
+  }
+  const fallOf = (so: number) => {
+    const start = Math.min(so + 1, touchdown);
+    return (frameTimes[touchdown] - frameTimes[start]) / stretch;
+  };
+  if (visible !== null && visible > 0) {
+    const fall = fallOf(visible);
+    if (fall >= 0.11 && fall <= 0.35) return visible;
+  }
+  const realTouch = frameTimes[touchdown] / stretch;
+  const targetStamp = (realTouch - targetFallSeconds) * stretch;
+  let best = 0;
+  for (let i = 0; i < touchdown; i += 1) {
+    if (frameTimes[i] <= targetStamp) best = i;
+  }
+  return best;
 }
 
 /**

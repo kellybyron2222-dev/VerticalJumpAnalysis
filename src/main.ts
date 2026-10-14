@@ -22,7 +22,16 @@ import { parseMovFrameTimes } from "./mov.ts";
 import { analyzeClip } from "./pose.ts";
 import { previewMetrics, realSecondsOnClock } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
-import { captureFps, estimateBoxHeight, isVariableRate, measuredFps, sanityWarnings, sloMoStretch, slowFallStepOff } from "./timing.ts";
+import {
+  captureFps,
+  estimateBoxHeight,
+  isVariableRate,
+  measuredFps,
+  metricStretch,
+  sanityWarnings,
+  sloMoStretch,
+  stepOffForFall,
+} from "./timing.ts";
 import {
   createTrial,
   loadTrials,
@@ -162,6 +171,16 @@ videoInput.addEventListener("change", () => {
 video.addEventListener("loadedmetadata", onReady);
 video.addEventListener("durationchange", onReady);
 video.addEventListener("error", () => {
+  // Keep the file clock usable. A decode error must not wipe timestamps or
+  // leave Auto-detect disabled when the sample table already loaded.
+  if (frameTimes && frameTimes.length >= 3) {
+    ready = true;
+    videoStatus.hidden = false;
+    videoStatus.textContent = "Preview failed to decode, but frame times are ready. Try Auto-detect or mark by hand.";
+    setTransportEnabled(true);
+    render();
+    return;
+  }
   ready = false;
   setTransportEnabled(false);
   videoStatus.hidden = false;
@@ -265,10 +284,6 @@ function loadFile(file: File): void {
   measuredUrl = null;
   frameTimes = null;
   seeker.setClock(null);
-  void clockRead.then((times) => {
-    if (generation !== loadGeneration || !times) return;
-    applyFrameClock(times);
-  });
   cadenceStatus.textContent = "";
   clipName.textContent = file.name;
   emptyVideo.hidden = true;
@@ -281,6 +296,13 @@ function loadFile(file: File): void {
   video.src = objectUrl;
   video.load();
   primePlayback(video);
+  // Apply the clock after the sync load work so an error handler cannot
+  // disable controls after timestamps are ready.
+  void clockRead.then((times) => {
+    if (generation !== loadGeneration || !times) return;
+    applyFrameClock(times);
+    if (!measuring && !detecting) setTransportEnabled(true);
+  });
 }
 
 function primePlayback(media: HTMLVideoElement): void {
@@ -300,13 +322,13 @@ function primePlayback(media: HTMLVideoElement): void {
 }
 
 function onReady(): void {
-  const count = seeker.frameCount;
-  if (count <= 0) return;
+  // A file clock alone is enough to know the frame count; do not wait on duration.
+  if (seeker.frameCount <= 0 && !(video.duration > 0)) return;
   ready = true;
   videoStatus.hidden = true;
-  scrubber.max = String(count - 1);
-  setTransportEnabled(true);
-  frame = clampFrame(frame, count);
+  scrubber.max = String(Math.max(0, seeker.frameCount - 1));
+  setTransportEnabled(transportEnabledAfterClockRead(seeker.frameCount));
+  frame = clampFrame(frame, seeker.frameCount);
   render();
   if (objectUrl && measuredUrl !== objectUrl) {
     measuredUrl = objectUrl;
@@ -319,26 +341,30 @@ function onReady(): void {
 function applyFrameClock(times: readonly number[]): void {
   frameTimes = [...times];
   seeker.setClock(frameTimes);
-  const playback = measuredFps(frameTimes);
-  const stretch = sloMoStretch(frameTimes);
-  if (!stretchTouched && stretch > 1) {
-    factor = stretch;
-    slowInput.value = String(stretch);
+  seeker.setFps(captureFps(times) ?? measuredFps(times) ?? 240);
+  const playback = measuredFps(times);
+  const stretch = sloMoStretch(times);
+  if (!stretchTouched) {
+    factor = stretch > 1 ? stretch : 1;
+    slowInput.value = String(factor);
     syncChips();
   }
-  const capture = captureFps(frameTimes);
+  const capture = captureFps(times);
   if (capture) fpsInput.value = capture.toFixed(1);
-  const variable = isVariableRate(frameTimes);
+  const variable = isVariableRate(times);
   cadenceStatus.textContent =
     stretch > 1
-      ? `Capture ${capture ? capture.toFixed(1) : "—"} fps. Playback holds frames at ${playback ? playback.toFixed(0) : "—"} fps, so times are ${stretch}× slow-mo, not that playback rate.`
+      ? `Capture ${capture ? capture.toFixed(1) : "—"} fps. Playback holds frames at ${playback ? playback.toFixed(0) : "—"} fps, so every duration is divided by ${stretch}× (real time).`
       : variable
         ? `Variable frame rate, average ${playback ? playback.toFixed(0) : "—"} fps over ${frameTimes.length} frames. Times use each frame's timestamp.`
         : `Measured ${playback ? playback.toFixed(0) : "—"} fps from ${frameTimes.length} frame timestamps. Contact, flight, and the box use those times.`;
-  if (ready) {
-    const count = seeker.frameCount;
-    scrubber.max = String(Math.max(0, count - 1));
-    frame = clampFrame(frame, count);
+  // Enable stepping as soon as we have a clock — do not wait for detectCadence.
+  if (seeker.frameCount > 0) {
+    ready = true;
+    if (Number.isFinite(video.duration) && video.duration > 0) videoStatus.hidden = true;
+    scrubber.max = String(seeker.frameCount - 1);
+    frame = clampFrame(frame, seeker.frameCount);
+    if (!measuring && !detecting) setTransportEnabled(true);
     render();
   }
 }
@@ -352,13 +378,21 @@ async function detectCadence(): Promise<void> {
   if (!ready || measuring || detecting) return;
   const url = objectUrl;
   const generation = loadGeneration;
+  // File sample-table clock is already enough. Do not disable the UI or play
+  // the clip again — that was leaving Auto-detect stuck off on load.
+  let times = frameTimes ?? (await clockRead);
+  if (generation !== loadGeneration || url !== objectUrl) return;
+  if (times && times.length >= 3) {
+    applyFrameClock(times);
+    setTransportEnabled(true);
+    setFrame(frame);
+    return;
+  }
   measuring = true;
   setTransportEnabled(false);
   cadenceStatus.textContent = "Reading each frame's timestamp…";
   try {
-    let times = await clockRead;
-    if (generation !== loadGeneration || url !== objectUrl) return;
-    if (!times) times = await collectFrameTimes(video);
+    times = await collectFrameTimes(video);
     if (generation !== loadGeneration || url !== objectUrl) return;
     if (!times) {
       frameTimes = null;
@@ -383,9 +417,13 @@ async function detectCadence(): Promise<void> {
  * Marks stay on the same frame. The factor only changes real-seconds conversion,
  * so tapping 2×/4×/8× does not move the picture and cannot be applied twice.
  */
-/** Playback holds are not real time. A 1/60-and-1/30 slo-mo file is 4× from capture rate to the clock. */
+/**
+ * Playback holds are not real time. Even if the chip still reads 1×, a
+ * 1/60-and-1/30 clock must use the detected 4× — that is the 231 in bug.
+ */
 function activeStretch(): number {
-  return factor;
+  if (stretchTouched) return factor;
+  return metricStretch(frameTimes ?? undefined, factor);
 }
 
 function applyFactor(next: number): void {
@@ -438,10 +476,12 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = `Auto-detect failed: ${result.reason} Mark the frames by hand.`;
       return;
     }
-    marks.stepOff =
-      result.events.stepOff !== null && activeStretch() >= 4
-        ? slowFallStepOff(result.events.stepOff, result.events.touchdown)
-        : result.events.stepOff;
+    marks.stepOff = stepOffForFall(
+      result.events.stepOff,
+      result.events.touchdown,
+      frameTimes ?? undefined,
+      activeStretch(),
+    );
     marks.touchdown = result.events.touchdown;
     marks.takeoff = result.events.takeoff;
     marks.landing = result.events.landing;

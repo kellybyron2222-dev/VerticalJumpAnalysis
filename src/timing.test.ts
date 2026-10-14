@@ -11,6 +11,7 @@ import {
   mediaFrameRate,
   realSecondsFromMedia,
   rescaleFrame,
+  metricStretch,
   sanityWarnings,
   sloMoStretch,
   slowFallStepOff,
@@ -229,14 +230,29 @@ describe("estimateBoxHeight", () => {
     expect(rawJump!.gctMs).toBeGreaterThan(800);
     expect(rawJump!.flightMs).toBeGreaterThan(2000);
 
+    // A UI factor left at 1× must still apply the detected 4× — Byron's phone
+    // produced 231 in when metrics trusted that 1× chip.
+    expect(metricStretch(times, 1)).toBe(4);
+    const phoneMarks = { touchdown: 29, takeoff: 67, landing: 160 };
+    const phoneFixed = computeTrialMetrics({
+      ...phoneMarks,
+      fps: playback,
+      slowMoFactor: metricStretch(times, 1),
+      frameTimes: times,
+    });
+    expect(phoneFixed!.heightIn).toBeGreaterThan(12);
+    expect(phoneFixed!.heightIn).toBeLessThan(18);
+    expect(phoneFixed!.flightMs).toBeGreaterThan(450);
+    expect(phoneFixed!.flightMs).toBeLessThan(650);
+
     const stepOff = slowFallStepOff(visibleStep, touchdown);
-    const box = estimateBoxHeight(stepOff, touchdown, playback, 4, times);
+    const box = estimateBoxHeight(stepOff, touchdown, playback, metricStretch(times, 1), times);
     const jump = computeTrialMetrics({
       touchdown,
       takeoff,
       landing,
       fps: playback,
-      slowMoFactor: 4,
+      slowMoFactor: metricStretch(times, 1),
       frameTimes: times,
     });
     expect(box!.heightIn).toBeGreaterThan(5);
