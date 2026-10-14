@@ -39,8 +39,9 @@ import {
   type JumpType,
   type TrialRecord,
 } from "./storage.ts";
-import { boxProfileByWeek, sessionsForDay, type SessionMetric } from "./sessions.ts";
+import { metricByDate, sessionsForDay, type SessionMetric } from "./sessions.ts";
 import { metricLabel, renderBoxChart } from "./chart.ts";
+import { BUILD_ID, ensureLatestBuild } from "./version.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -116,9 +117,14 @@ let sloMoHint: { slowMoPlayback?: boolean | null } = {};
 /** Timestamps parsed from the file. Playback sampling is only the fallback. */
 let clockRead: Promise<number[] | null> = Promise.resolve(null);
 
-const BUILD_ID = "2026-10-14d";
 const buildLabel = document.querySelector("#build-label");
 if (buildLabel) buildLabel.textContent = BUILD_ID;
+void ensureLatestBuild();
+if ("serviceWorker" in navigator) {
+  void navigator.serviceWorker.getRegistrations().then((regs) => {
+    for (const reg of regs) void reg.unregister();
+  });
+}
 
 cadenceButton.addEventListener("click", () => {
   void detectCadence();
@@ -780,12 +786,26 @@ function renderHistory(): void {
   const metric = chartMetric.value as SessionMetric;
   const typeValue = chartJumpType.value;
   const jumpType = typeValue === "all" ? undefined : (typeValue as JumpType);
-  const series = boxProfileByWeek(trials, metric, jumpType);
-  chartRoot.replaceChildren(renderBoxChart(series, metric));
-  chartLegend.textContent =
-    series.length === 0
-      ? "No saved jumps yet — chart stays empty until you save."
-      : `${metricLabel(metric)} · weeks: ${series.map((entry) => `${entry.label}${jumpType ? "" : ` ${entry.jumpType}`}`).join(", ")}`;
+  const series = metricByDate(trials, metric, jumpType);
+  const { svg, legend } = renderBoxChart(series, metric);
+  chartRoot.replaceChildren(svg);
+  chartLegend.replaceChildren();
+  if (legend.length === 0) {
+    chartLegend.textContent = "No saved jumps yet — chart stays empty until you save.";
+    return;
+  }
+  const title = document.createElement("span");
+  title.textContent = `${metricLabel(metric)} · mean by date`;
+  chartLegend.append(title);
+  for (const entry of legend) {
+    const item = document.createElement("span");
+    item.className = "chart-legend-item";
+    const swatch = document.createElement("span");
+    swatch.className = "chart-swatch";
+    swatch.style.background = entry.color;
+    item.append(swatch, document.createTextNode(`${entry.boxHeightIn} in`));
+    chartLegend.append(item);
+  }
 }
 
 function renderTrial(trial: TrialRecord): HTMLLIElement {

@@ -667,9 +667,27 @@ legend {
 }
 
 .chart-legend {
-  margin-top: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+  margin-top: 0.45rem;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-swatch {
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 2px;
 }
 
 .saved h2 {

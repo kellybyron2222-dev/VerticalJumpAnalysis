@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   bestOf,
-  boxProfileByWeek,
   groupSessions,
+  metricByDate,
   sessionsForDay,
   trialDay,
-  weekKey,
 } from "./sessions.ts";
 import type { TrialRecord } from "./storage.ts";
 
@@ -62,21 +61,25 @@ describe("session grouping", () => {
   });
 });
 
-describe("box profile by week", () => {
-  it("builds one series per week with means by box", () => {
-    // Same ISO week (Mon start): Oct 13–14 2026.
+describe("metric by date", () => {
+  it("builds one series per box with session means on each date", () => {
     const trials = [
       jump({ id: "a", createdAt: "2026-10-13T10:00:00", jumpType: "drop", boxHeightIn: 6, heightIn: 10 }),
       jump({ id: "b", createdAt: "2026-10-13T11:00:00", jumpType: "drop", boxHeightIn: 12, heightIn: 12 }),
       jump({ id: "c", createdAt: "2026-10-14T10:00:00", jumpType: "drop", boxHeightIn: 6, heightIn: 14 }),
-      jump({ id: "d", createdAt: "2026-10-14T11:00:00", jumpType: "depth", boxHeightIn: 6, heightIn: 11 }),
+      jump({ id: "d", createdAt: "2026-10-14T11:00:00", jumpType: "drop", boxHeightIn: 6, heightIn: 16 }),
+      jump({ id: "e", createdAt: "2026-10-14T12:00:00", jumpType: "depth", boxHeightIn: 6, heightIn: 11 }),
     ];
-    const drop = boxProfileByWeek(trials, "heightIn", "drop");
-    expect(drop).toHaveLength(1);
-    expect(drop[0]!.label).toBe(weekKey(trialDay("2026-10-13T10:00:00")));
-    expect(drop[0]!.points.map((p) => p.boxHeightIn)).toEqual([6, 12]);
-    // Box 6: mean of Mon session (10) and Tue session (14) → 12
-    expect(drop[0]!.points[0]!.value).toBeCloseTo(12, 5);
-    expect(drop[0]!.points[1]!.value).toBeCloseTo(12, 5);
+    const drop = metricByDate(trials, "heightIn", "drop");
+    expect(drop.map((s) => s.boxHeightIn)).toEqual([6, 12]);
+    const box6 = drop[0]!;
+    expect(box6.points.map((p) => p.day)).toEqual([
+      trialDay("2026-10-13T10:00:00"),
+      trialDay("2026-10-14T10:00:00"),
+    ]);
+    expect(box6.points[0]!.value).toBeCloseTo(10, 5);
+    // Oct 14 drop @ 6 in: mean of 14 and 16
+    expect(box6.points[1]!.value).toBeCloseTo(15, 5);
+    expect(box6.points[1]!.best).toBe(16);
   });
 });

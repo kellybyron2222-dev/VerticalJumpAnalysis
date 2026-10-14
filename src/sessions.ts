@@ -13,20 +13,18 @@ export interface SessionGroup {
   best: Record<SessionMetric, number>;
 }
 
-export interface BoxProfilePoint {
-  boxHeightIn: number;
-  /** Mean of the session group at this box (or week mean). */
-  value: number;
-  count: number;
+export interface DateSeriesPoint {
   day: string;
-  jumpType: JumpType;
+  /** Session mean for that date + box. */
+  value: number;
+  best: number;
+  count: number;
 }
 
-export interface BoxProfileSeries {
-  /** Week start YYYY-MM-DD (Monday local) or session day. */
-  label: string;
-  jumpType: JumpType;
-  points: BoxProfilePoint[];
+/** One box height over time (session means by date). */
+export interface BoxDateSeries {
+  boxHeightIn: number;
+  points: DateSeriesPoint[];
 }
 
 /** Local calendar day for a saved jump. */
@@ -137,49 +135,55 @@ export function sessionsForDay(
 }
 
 /**
- * Mean metric vs box height, one series per week (and jump type).
- * Points are sorted by box height.
+ * Session-mean metric over dates, one series per box height.
+ * Points are sorted by date ascending for line charts.
  */
-export function boxProfileByWeek(
+export function metricByDate(
   trials: readonly TrialRecord[],
   metric: SessionMetric,
   jumpType?: JumpType,
-): BoxProfileSeries[] {
+): BoxDateSeries[] {
   const sessions = groupSessions(trials).filter(
     (group) => jumpType === undefined || group.jumpType === jumpType,
   );
-  const byWeek = new Map<string, SessionGroup[]>();
+
+  // day|box → accumulate (when jump type is "all", merge types on the same day/box)
+  const cells = new Map<string, { day: string; boxHeightIn: number; means: number[]; bests: number[]; count: number }>();
   for (const group of sessions) {
-    const key = `${weekKey(group.day)}|${group.jumpType}`;
-    const list = byWeek.get(key);
-    if (list) list.push(group);
-    else byWeek.set(key, [group]);
-  }
-
-  const series: BoxProfileSeries[] = [];
-  for (const [key, groups] of byWeek) {
-    const [label, type] = key.split("|");
-    // Same box in one week: average the session means (multi-day testing).
-    const byBox = new Map<number, SessionGroup[]>();
-    for (const group of groups) {
-      const list = byBox.get(group.boxHeightIn);
-      if (list) list.push(group);
-      else byBox.set(group.boxHeightIn, [group]);
+    const key = `${group.day}|${group.boxHeightIn}`;
+    const cell = cells.get(key);
+    if (cell) {
+      cell.means.push(group.mean[metric]);
+      cell.bests.push(group.best[metric]);
+      cell.count += group.count;
+    } else {
+      cells.set(key, {
+        day: group.day,
+        boxHeightIn: group.boxHeightIn,
+        means: [group.mean[metric]],
+        bests: [group.best[metric]],
+        count: group.count,
+      });
     }
-    const points: BoxProfilePoint[] = [...byBox.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([boxHeightIn, boxGroups]) => ({
-        boxHeightIn,
-        value: mean(boxGroups.map((g) => g.mean[metric])),
-        count: boxGroups.reduce((sum, g) => sum + g.count, 0),
-        day: boxGroups[0]!.day,
-        jumpType: type as JumpType,
-      }));
-    series.push({ label, jumpType: type as JumpType, points });
   }
 
-  return series.sort((a, b) => {
-    if (a.label !== b.label) return a.label < b.label ? 1 : -1;
-    return a.jumpType === "drop" ? -1 : 1;
-  });
+  const byBox = new Map<number, DateSeriesPoint[]>();
+  for (const cell of cells.values()) {
+    const point: DateSeriesPoint = {
+      day: cell.day,
+      value: mean(cell.means),
+      best: bestOf(metric, cell.bests),
+      count: cell.count,
+    };
+    const list = byBox.get(cell.boxHeightIn);
+    if (list) list.push(point);
+    else byBox.set(cell.boxHeightIn, [point]);
+  }
+
+  return [...byBox.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([boxHeightIn, points]) => ({
+      boxHeightIn,
+      points: points.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0)),
+    }));
 }

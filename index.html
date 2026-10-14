@@ -15,13 +15,46 @@
       content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Jump Lab · 2026-10-14d</title>
+    <title>Jump Lab · 2026-10-14e</title>
+    <!-- Inline so a stale module bundle still learns about a newer deploy. -->
+    <script>
+      (function () {
+        var PAGE = "2026-10-14e";
+        if ("serviceWorker" in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            regs.forEach(function (reg) {
+              reg.unregister();
+            });
+          });
+        }
+        function check() {
+          var url = new URL("build.json", document.baseURI);
+          url.searchParams.set("t", String(Date.now()));
+          fetch(url.href, { cache: "no-store" })
+            .then(function (r) {
+              return r.ok ? r.json() : null;
+            })
+            .then(function (data) {
+              if (!data || !data.build || data.build === PAGE) return;
+              var params = new URLSearchParams(location.search);
+              if (params.get("b") === data.build) return;
+              params.set("b", data.build);
+              location.replace(location.pathname + "?" + params.toString() + location.hash);
+            })
+            .catch(function () {});
+        }
+        check();
+        document.addEventListener("visibilitychange", function () {
+          if (document.visibilityState === "visible") check();
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="app">
       <header class="top">
         <div>
-          <p class="eyebrow">Byron · build <span id="build-label">2026-10-14d</span></p>
+          <p class="eyebrow">Byron · build <span id="build-label">2026-10-14e</span></p>
           <h1>Jump Lab</h1>
         </div>
         <div class="menu">
@@ -92,7 +125,7 @@
         </section>
 
         <section class="chart-section" id="chart-section" aria-labelledby="chart-title">
-          <h2 id="chart-title">By box height</h2>
+          <h2 id="chart-title">By date</h2>
           <label class="field" for="chart-metric">
             Metric
             <select id="chart-metric">
