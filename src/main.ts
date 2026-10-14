@@ -39,6 +39,8 @@ import {
   type JumpType,
   type TrialRecord,
 } from "./storage.ts";
+import { boxProfileByWeek, sessionsForDay, type SessionMetric } from "./sessions.ts";
+import { metricLabel, renderBoxChart } from "./chart.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -66,6 +68,12 @@ const saveStatus = must<HTMLElement>("#save-status");
 const savedCount = must<HTMLElement>("#saved-count");
 const savedEmpty = must<HTMLElement>("#saved-empty");
 const jumpList = must<HTMLUListElement>("#jump-list");
+const sessionEmpty = must<HTMLElement>("#session-empty");
+const sessionList = must<HTMLUListElement>("#session-list");
+const chartRoot = must<HTMLElement>("#chart-root");
+const chartLegend = must<HTMLElement>("#chart-legend");
+const chartMetric = must<HTMLSelectElement>("#chart-metric");
+const chartJumpType = must<HTMLSelectElement>("#chart-jump-type");
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const detectStatus = must<HTMLElement>("#detect-status");
@@ -242,6 +250,8 @@ for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips butt
 }
 
 must<HTMLButtonElement>("#save-jump").addEventListener("click", onSave);
+chartMetric.addEventListener("change", renderHistory);
+chartJumpType.addEventListener("change", renderHistory);
 
 renderTrials();
 render();
@@ -724,6 +734,43 @@ function renderTrials(): void {
   savedEmpty.hidden = trials.length > 0;
   jumpList.replaceChildren();
   for (const trial of trials) jumpList.append(renderTrial(trial));
+  renderSession(trials);
+  renderHistory();
+}
+
+function renderSession(trials: TrialRecord[]): void {
+  const groups = sessionsForDay(trials);
+  sessionEmpty.hidden = groups.length > 0;
+  sessionList.replaceChildren();
+  for (const group of groups) {
+    const item = document.createElement("li");
+    item.className = "session-group";
+    const title = document.createElement("p");
+    title.className = "session-title";
+    const target = 3;
+    title.textContent = `${formatJumpType(group.jumpType)} · ${formatBoxInches(group.boxHeightIn)} · ${group.count}/${target}`;
+    const mean = document.createElement("p");
+    mean.className = "detail";
+    mean.textContent = `Mean · height ${formatHeightIn(group.mean.heightIn)} · contact ${formatMilliseconds(group.mean.gctMs)} · flight ${formatMilliseconds(group.mean.flightMs)} · RSI ${formatRsi(group.mean.rsi)}`;
+    const best = document.createElement("p");
+    best.className = "detail";
+    best.textContent = `Best · height ${formatHeightIn(group.best.heightIn)} · contact ${formatMilliseconds(group.best.gctMs)} · flight ${formatMilliseconds(group.best.flightMs)} · RSI ${formatRsi(group.best.rsi)}`;
+    item.append(title, mean, best);
+    sessionList.append(item);
+  }
+}
+
+function renderHistory(): void {
+  const trials = loadTrials(localStorage);
+  const metric = chartMetric.value as SessionMetric;
+  const typeValue = chartJumpType.value;
+  const jumpType = typeValue === "all" ? undefined : (typeValue as JumpType);
+  const series = boxProfileByWeek(trials, metric, jumpType);
+  chartRoot.replaceChildren(renderBoxChart(series, metric));
+  chartLegend.textContent =
+    series.length === 0
+      ? ""
+      : `${metricLabel(metric)} · weeks: ${series.map((entry) => `${entry.label}${jumpType ? "" : ` ${entry.jumpType}`}`).join(", ")}`;
 }
 
 function renderTrial(trial: TrialRecord): HTMLLIElement {

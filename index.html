@@ -290,6 +290,34 @@
           <label class="button-secondary file-button" for="video-input">Replace video</label>
         </div>
 
+        <section class="session" aria-labelledby="session-title">
+          <h2 id="session-title">Today’s session</h2>
+          <p id="session-empty">No jumps saved today yet.</p>
+          <ul id="session-list"></ul>
+        </section>
+
+        <section class="chart-section" aria-labelledby="chart-title">
+          <h2 id="chart-title">By box height</h2>
+          <label class="field" for="chart-metric">
+            Metric
+            <select id="chart-metric">
+              <option value="heightIn">Jump height</option>
+              <option value="gctMs">Contact time</option>
+              <option value="rsi">RSI</option>
+            </select>
+          </label>
+          <label class="field" for="chart-jump-type">
+            Jump type
+            <select id="chart-jump-type">
+              <option value="drop">Drop jump</option>
+              <option value="depth">Depth jump</option>
+              <option value="all">Both</option>
+            </select>
+          </label>
+          <div id="chart-root"></div>
+          <p id="chart-legend" class="chart-legend"></p>
+        </section>
+
         <section class="saved" aria-labelledby="saved-title">
           <h2 id="saved-title">Saved on this phone <span id="saved-count">0</span></h2>
           <p id="saved-empty">No jumps saved on this phone yet.</p>

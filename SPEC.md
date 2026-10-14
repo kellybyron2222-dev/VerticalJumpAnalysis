@@ -6,9 +6,9 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestones 3–5 are specified below and are not built.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a simple box-height chart (height, contact time, RSI by week). Milestones 4–5 are specified below and are not built.
 
-Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built ahead of Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
+Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
 ## Slow-mo playback and real time
 
@@ -81,6 +81,8 @@ Detect touchdown, takeoff, and landing in the browser with a pose model (MediaPi
 
 ### Milestone 3 — Metrics, sessions, and box profile
 
+Done when all of the following work:
+
 Definitions (frame index is the source of truth; fps converts frames to time):
 
 - Ground contact time: `GCT = takeoff − touchdown`, in milliseconds.
@@ -90,9 +92,10 @@ Definitions (frame index is the source of truth; fps converts frames to time):
 
 Behavior:
 
-- Group trials by jump type and box height.
-- Three trials per box per session. Track the session mean, and keep the best as a PR.
-- Box-height analysis: show how each metric changes as box height changes.
+- Each analyzed clip saves as one jump (local numbers only): date, jump type, box height (auto-measured, editable), contact time, flight time, jump height, RSI.
+- Group the day’s jumps by jump type and box height. Show mean and best for each metric (target 3 jumps per session / box).
+- Chart jump height, contact time, and RSI by box height over weeks/sessions (simple SVG; readable on phone).
+- Unit tests cover session grouping and aggregation.
 
 ### Milestone 4 — Baseline and flags
 
@@ -122,6 +125,10 @@ Columns, in order:
 Export as CSV and as XLSX.
 
 Later, and only after export works: optional live OneDrive sync via Microsoft Graph. This is last and remains optional. The app must still be fully usable with no Microsoft account.
+
+### Later — Multi-jump clips (after Excel)
+
+After Milestone 5 export works: support sets of 1–4 jumps in one clip. Split each jump from its step-off; warn if a jump falls outside the slowed section of the file.
 
 ## Hosting
 

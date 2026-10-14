@@ -607,10 +607,58 @@ legend {
   font-weight: 600;
 }
 
+.session,
+.chart-section,
 .saved {
   margin-top: 2rem;
   padding-top: 1rem;
   border-top: 1px solid var(--line);
+}
+
+#session-list,
+#jump-list {
+  margin: 0.8rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-group {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.session-group:last-child {
+  border-bottom: 0;
+}
+
+.session-title {
+  font-weight: 600;
+}
+
+.box-chart {
+  display: block;
+  width: 100%;
+  max-width: 28rem;
+  height: auto;
+  margin-top: 0.75rem;
+}
+
+.chart-axis {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart-tick,
+.chart-empty {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.chart-legend {
+  margin-top: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .saved h2 {
@@ -628,12 +676,6 @@ legend {
 #saved-empty {
   margin-top: 0.55rem;
   color: var(--muted);
-}
-
-#jump-list {
-  margin: 0.8rem 0 0;
-  padding: 0;
-  list-style: none;
 }
 
 .jump {
