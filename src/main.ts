@@ -51,6 +51,12 @@ import {
   type FlagMetric,
   type MetricBaseline,
 } from "./baseline.ts";
+import {
+  loadGctTargetMs,
+  needsProfileRetest,
+  raiseBoxSignal,
+  saveGctTargetMs,
+} from "./raiseBox.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -80,6 +86,8 @@ const savedEmpty = must<HTMLElement>("#saved-empty");
 const jumpList = must<HTMLUListElement>("#jump-list");
 const sessionEmpty = must<HTMLElement>("#session-empty");
 const sessionList = must<HTMLUListElement>("#session-list");
+const gctTargetInput = must<HTMLInputElement>("#gct-target");
+const profileRetest = must<HTMLElement>("#profile-retest");
 const chartRoot = must<HTMLElement>("#chart-root");
 const chartLegend = must<HTMLElement>("#chart-legend");
 const chartMetric = must<HTMLSelectElement>("#chart-metric");
@@ -269,6 +277,16 @@ for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips butt
 must<HTMLButtonElement>("#save-jump").addEventListener("click", onSave);
 chartMetric.addEventListener("change", renderHistory);
 chartJumpType.addEventListener("change", renderHistory);
+gctTargetInput.value = String(loadGctTargetMs(localStorage));
+gctTargetInput.addEventListener("change", () => {
+  const value = Number(gctTargetInput.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    gctTargetInput.value = String(loadGctTargetMs(localStorage));
+    return;
+  }
+  saveGctTargetMs(localStorage, value);
+  renderTrials();
+});
 
 renderTrials();
 render();
@@ -773,7 +791,19 @@ function renderSession(trials: TrialRecord[]): void {
   sessionEmpty.textContent = "No jumps saved today yet.";
   sessionList.replaceChildren();
   const rebaseline = loadRebaselineWeeks(localStorage);
-  const thisWeek = weekKey(trialDay(new Date().toISOString()));
+  const today = trialDay(new Date().toISOString());
+  const thisWeek = weekKey(today);
+  const gctTarget = loadGctTargetMs(localStorage);
+  gctTargetInput.value = String(gctTarget);
+
+  const retest = needsProfileRetest(trials, today);
+  profileRetest.hidden = !retest.needed;
+  profileRetest.textContent = retest.needed
+    ? retest.lastProfileDay
+      ? `Box-profile retest due · last full profile ${retest.lastProfileDay} (${retest.weeksSince} weeks ago)`
+      : "Box-profile retest due · no day with 3+ box heights yet"
+    : "";
+
   for (const group of groups) {
     const item = document.createElement("li");
     item.className = "session-group";
@@ -798,6 +828,11 @@ function renderSession(trials: TrialRecord[]): void {
     for (const metric of ["heightIn", "gctMs", "rsi"] as FlagMetric[]) {
       item.append(renderBaselineMetric(cell.metrics[metric]));
     }
+    const raise = raiseBoxSignal(cell, gctTarget);
+    const raiseLine = document.createElement("p");
+    raiseLine.className = `detail raise-box raise-${raise.signal}`;
+    raiseLine.textContent = raise.reason;
+    item.append(raiseLine);
     const rebase = document.createElement("button");
     rebase.type = "button";
     rebase.className = "text-button rebaseline";

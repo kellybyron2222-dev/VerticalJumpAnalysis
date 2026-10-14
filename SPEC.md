@@ -6,7 +6,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, and manual re-baseline in the session view. Milestone 5 is specified below and is not built.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, and box-profile retest reminder in the session view. Milestone 5 is specified below and is not built.
 
 Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
@@ -110,8 +110,9 @@ Done when all of the following work (per jump type + box height, for height, con
 - Flags (established only): |delta| < 1× CV normal; 1–2× CV watch; > 2× CV, or > 1× CV in the same direction for 2 consecutive weeks, real change. Contact time: lower is better; streak uses signed direction.
 - Session view shows this week vs baseline, % change, flag, and provisional/established status.
 - Pure baseline helpers live in their own module with unit tests.
-
-Later (not required for this milestone’s done bar): raise-box indicator (RSI > 1× CV for 2 weeks and GCT at target, default 250 ms); suggest full box-profile retest about every 4 weeks.
+- Raise-box indicator (per jump type + box): ready when RSI weekly mean is > 1× CV above baseline for 2 consecutive weeks and contact-time weekly mean is ≤ target (default 250 ms, editable) in both weeks; show hold if contact is above target or trending up (watch/real in the worse direction).
+- Box-profile retest reminder when 4+ weeks have passed since the last day that tested 3+ different box heights.
+- Raise-box / retest helpers are pure functions with unit tests.
 
 ### Milestone 5 — Excel, then optional OneDrive
 

@@ -660,6 +660,18 @@ legend {
   font-weight: 600;
 }
 
+.raise-box {
+  font-weight: 600;
+}
+
+.raise-ready {
+  color: var(--green);
+}
+
+.raise-hold {
+  color: var(--ld);
+}
+
 .box-chart {
   display: block;
   width: 100%;
