@@ -1,5 +1,5 @@
 /** Bump on every deploy that must reach phones without a manual cache clear. */
-export const BUILD_ID = "2026-10-14h";
+export const BUILD_ID = "2026-10-14i";
 
 const STORAGE_KEY = "jumpLab.buildUrl";
 

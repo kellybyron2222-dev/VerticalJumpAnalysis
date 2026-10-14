@@ -543,16 +543,48 @@ legend {
   background: var(--yellow);
 }
 
-.metrics {
-  margin-top: 1.2rem;
-  padding: 0.95rem;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 16px;
+.screen-title {
+  margin: 0.35rem 0 0.5rem;
 }
 
-.metrics-head h2 {
-  margin-bottom: 0.25rem;
+.section-label {
+  margin: 1.35rem 0 0.55rem;
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-size: 1.45rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.howto {
+  margin-bottom: 1.25rem;
+}
+
+.advanced {
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.build-line {
+  margin-top: 0.75rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics {
+  margin-top: 1.2rem;
+}
+
+.metrics-head .section-label {
+  margin-top: 0;
 }
 
 #metrics-hint {
@@ -560,34 +592,43 @@ legend {
   font-size: 0.92rem;
 }
 
-.metrics dl {
+.metric-cards {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.85rem 0.75rem;
+  gap: 0.65rem;
   margin: 0.85rem 0 0;
 }
 
-.metrics dt {
+.metric-card {
+  padding: 0.85rem 0.9rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.metric-card dt {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
-.metrics dd {
-  margin: 0;
+.metric-card dd {
+  margin: 0.25rem 0 0;
   font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
-  font-size: 2rem;
+  font-size: 2.35rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
-.metrics dd.sub {
-  margin-top: 0.15rem;
+.metric-card dd.sub {
+  margin-top: 0.2rem;
   color: var(--muted);
-  font-size: 1.15rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
 }
 
 .form-error {
@@ -765,6 +806,37 @@ legend {
   border-radius: 16px;
 }
 
+.jump-card-title {
+  margin-top: 0.15rem;
+  font-weight: 600;
+}
+
+.jump-metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem 0.65rem;
+  margin-top: 0.65rem;
+}
+
+.jump-metric-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.jump-metric-value {
+  display: block;
+  margin-top: 0.1rem;
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
 .jump .when,
 .jump .detail,
 .jump .notes {
@@ -779,6 +851,29 @@ legend {
 
 .jump .detail {
   font-variant-numeric: tabular-nums;
+}
+
+.box-test-hint {
+  margin-top: 1rem;
+}
+
+#screen-box .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+#box-test-height-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+#box-test-height-chips label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 600;
 }
 
 .jump .delete {

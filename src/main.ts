@@ -72,8 +72,11 @@ import {
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
+const screenBox = must<HTMLElement>("#screen-box");
 const menuButton = must<HTMLButtonElement>("#menu-button");
 const menuPanel = must<HTMLElement>("#menu-panel");
+const VISITED_KEY = "jumpLab.visited.v1";
+type AppScreen = "directions" | "box" | "analyze";
 const videoInput = must<HTMLInputElement>("#video-input");
 const video = must<HTMLVideoElement>("#video");
 const videoStatus = must<HTMLElement>("#video-status");
@@ -185,10 +188,18 @@ autoButton.addEventListener("click", () => {
 });
 cancelDetect.addEventListener("click", () => detecting?.abort());
 
-must<HTMLButtonElement>("#dismiss-guide").addEventListener("click", showAnalyze);
-must<HTMLButtonElement>("#open-guide").addEventListener("click", () => {
+must<HTMLButtonElement>("#dismiss-guide").addEventListener("click", () => showScreen("analyze"));
+must<HTMLButtonElement>("#nav-directions").addEventListener("click", () => {
   closeMenu();
-  showGuide();
+  showScreen("directions");
+});
+must<HTMLButtonElement>("#nav-box-test").addEventListener("click", () => {
+  closeMenu();
+  showScreen("box");
+});
+must<HTMLButtonElement>("#nav-analyze").addEventListener("click", () => {
+  closeMenu();
+  showScreen("analyze");
 });
 
 menuButton.addEventListener("click", () => {
@@ -355,6 +366,8 @@ boxTestType.addEventListener("change", () => {
 });
 
 renderBoxTestUi();
+const firstVisit = localStorage.getItem(VISITED_KEY) !== "1";
+showScreen(firstVisit ? "directions" : "analyze");
 renderTrials();
 render();
 
@@ -373,15 +386,17 @@ function renderBoxTestUi(): void {
   }
 }
 
-function showGuide(): void {
-  guide.hidden = false;
-  analyze.hidden = true;
-  window.scrollTo(0, 0);
-}
-
-function showAnalyze(): void {
-  guide.hidden = true;
-  analyze.hidden = false;
+function showScreen(screen: AppScreen): void {
+  guide.hidden = screen !== "directions";
+  screenBox.hidden = screen !== "box";
+  analyze.hidden = screen !== "analyze";
+  if (screen !== "directions") {
+    try {
+      localStorage.setItem(VISITED_KEY, "1");
+    } catch {
+      // ignore
+    }
+  }
   window.scrollTo(0, 0);
 }
 
@@ -736,7 +751,7 @@ function render(): void {
   must<HTMLElement>("#m-ft").textContent = preview.flightMs === null ? "—" : formatMsValue(preview.flightMs);
   must<HTMLElement>("#m-height").textContent = preview.heightIn === null ? "—" : formatInValue(preview.heightIn);
   must<HTMLElement>("#m-height-cm").textContent =
-    preview.heightCm === null ? "—" : formatHeightCm(preview.heightCm);
+    preview.heightCm === null ? "in" : `${formatHeightCm(preview.heightCm)}`;
   must<HTMLElement>("#m-rsi").textContent = preview.rsi === null ? "—" : formatRsi(preview.rsi);
 
   const estimate =
@@ -1001,20 +1016,40 @@ function renderHistory(): void {
 
 function renderTrial(trial: TrialRecord): HTMLLIElement {
   const item = document.createElement("li");
-  item.className = "jump";
+  item.className = "jump jump-card";
 
   const when = document.createElement("p");
   when.className = "when";
   when.textContent = formatWhen(trial.createdAt);
 
   const title = document.createElement("p");
-  title.textContent = `${formatJumpType(trial.jumpType)} · ${formatBoxInches(trial.boxHeightIn)} · ${formatArmSwing(trial.armSwing)}`;
+  title.className = "jump-card-title";
+  title.textContent = `${formatJumpType(trial.jumpType)} · ${formatBoxInches(trial.boxHeightIn)}`;
 
-  const detail = document.createElement("p");
-  detail.className = "detail";
-  detail.textContent = `Jump height ${formatHeightIn(trial.heightIn)} · Contact time ${formatMilliseconds(trial.gctMs)} · Flight time ${formatMilliseconds(trial.flightMs)} · RSI ${formatRsi(trial.rsi)}${trial.slowMoFactor && trial.slowMoFactor !== 1 ? ` · ${trial.slowMoFactor}× slow-mo` : ""}`;
+  const meta = document.createElement("p");
+  meta.className = "notes";
+  meta.textContent = formatArmSwing(trial.armSwing);
 
-  item.append(when, title, detail);
+  const grid = document.createElement("div");
+  grid.className = "jump-metric-grid";
+  for (const [label, value] of [
+    ["Height", formatHeightIn(trial.heightIn)],
+    ["Contact", formatMilliseconds(trial.gctMs)],
+    ["Flight", formatMilliseconds(trial.flightMs)],
+    ["RSI", formatRsi(trial.rsi)],
+  ] as const) {
+    const cell = document.createElement("div");
+    const dt = document.createElement("span");
+    dt.className = "jump-metric-label";
+    dt.textContent = label;
+    const dd = document.createElement("span");
+    dd.className = "jump-metric-value";
+    dd.textContent = value;
+    cell.append(dt, dd);
+    grid.append(cell);
+  }
+
+  item.append(when, title, meta, grid);
   if (trial.notes) {
     const notes = document.createElement("p");
     notes.className = "notes";

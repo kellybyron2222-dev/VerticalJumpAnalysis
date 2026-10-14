@@ -15,11 +15,10 @@
       content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Jump Lab · 2026-10-14h</title>
-    <!-- Inline so a stale module bundle still learns about a newer deploy. -->
+    <title>Jump Lab · 2026-10-14i</title>
     <script>
       (function () {
-        var PAGE = "2026-10-14h";
+        var PAGE = "2026-10-14i";
         if ("serviceWorker" in navigator) {
           navigator.serviceWorker.getRegistrations().then(function (regs) {
             regs.forEach(function (reg) {
@@ -54,7 +53,7 @@
     <div id="app">
       <header class="top">
         <div>
-          <p class="eyebrow">Byron · build <span id="build-label">2026-10-14h</span></p>
+          <p class="eyebrow">Byron</p>
           <h1>Jump Lab</h1>
         </div>
         <div class="menu">
@@ -68,16 +67,18 @@
             Menu
           </button>
           <div id="menu-panel" role="menu" hidden>
-            <button type="button" id="open-guide" role="menuitem">Camera setup</button>
+            <button type="button" id="nav-directions" role="menuitem">Directions</button>
+            <button type="button" id="nav-box-test" role="menuitem">Optimal Box Height Analysis</button>
+            <button type="button" id="nav-analyze" role="menuitem">Jump Analysis</button>
           </div>
         </div>
       </header>
 
-      <section id="guide" class="guide" aria-labelledby="guide-title">
-        <h2 id="guide-title">Camera setup</h2>
-        <p class="lede">
-          Get the phone right before you record. Marking the jump starts after you close this.
-        </p>
+      <section id="guide" class="screen guide" aria-labelledby="guide-title" hidden>
+        <h2 id="guide-title">Directions</h2>
+        <p class="lede">Camera setup first, then how Jump Lab works on this phone.</p>
+
+        <h3 class="section-label">Camera setup</h3>
         <ol>
           <li>
             <h3>Side-on</h3>
@@ -112,79 +113,72 @@
             <p>iPhone slo-mo. The capture frame rate starts at 240.</p>
           </li>
         </ol>
-        <button type="button" id="dismiss-guide" class="button-primary">Start a jump</button>
+
+        <h3 class="section-label">How to use the app</h3>
+        <ol class="howto">
+          <li>
+            <h3>Jump Analysis</h3>
+            <p>
+              Load a clip, mark step-off / touchdown / takeoff / landing, check the metric cards, save
+              the jump. Today’s session shows means, baseline, flags, and raise-box.
+            </p>
+          </li>
+          <li>
+            <h3>Optimal Box Height Analysis</h3>
+            <p>
+              Run a box test across 3–5 heights (3 jumps each). The app recommends a working box from
+              RSI and contact time. Use this for the 4-week profile retest.
+            </p>
+          </li>
+          <li>
+            <h3>Privacy</h3>
+            <p>Video stays on this phone. Only numbers are saved locally.</p>
+          </li>
+        </ol>
+        <button type="button" id="dismiss-guide" class="button-primary">Go to Jump Analysis</button>
       </section>
 
-      <section id="analyze" hidden>
+      <section id="screen-box" class="screen" aria-labelledby="box-test-title" hidden>
+        <h2 id="box-test-title">Optimal Box Height Analysis</h2>
+        <p class="lede">
+          3 jumps per height · about 1 min rest between jumps · 2–3 min between heights.
+        </p>
+        <label class="field" for="box-test-type">
+          Jump type
+          <select id="box-test-type">
+            <option value="drop">Drop jump</option>
+            <option value="depth">Depth jump</option>
+          </select>
+        </label>
+        <fieldset id="box-test-heights">
+          <legend>Box heights (pick 3–5)</legend>
+          <div class="chips" id="box-test-height-chips">
+            <label><input type="checkbox" value="6" checked /> 6</label>
+            <label><input type="checkbox" value="12" checked /> 12</label>
+            <label><input type="checkbox" value="18" checked /> 18</label>
+            <label><input type="checkbox" value="24" checked /> 24</label>
+            <label><input type="checkbox" value="30" /> 30</label>
+          </div>
+        </fieldset>
+        <p id="box-test-status" class="detail baseline-status"></p>
+        <button type="button" id="box-test-start" class="button-secondary">Start box test</button>
+        <button type="button" id="box-test-finish" class="button-primary" hidden>
+          Finish &amp; recommend
+        </button>
+        <p id="box-test-result" class="detail" hidden></p>
+        <div id="box-test-chart"></div>
+        <p class="detail box-test-hint">
+          While a test is active, save jumps in Jump Analysis — they are tagged to this test. Then
+          finish here for the recommendation.
+        </p>
+      </section>
+
+      <section id="analyze" class="screen" hidden>
+        <h2 class="screen-title">Jump Analysis</h2>
         <p class="privacy">The clip stays on this phone. A saved jump stores frames and numbers only.</p>
 
-        <section class="session" id="session-section" aria-labelledby="session-title">
-          <h2 id="session-title">Today’s session</h2>
-          <label class="field" for="gct-target">
-            Contact target (ms)
-            <input id="gct-target" type="number" inputmode="numeric" min="1" step="1" value="250" />
-          </label>
-          <p id="profile-retest" class="detail baseline-status" hidden></p>
-          <p id="session-empty">No jumps saved today yet.</p>
-          <ul id="session-list"></ul>
-        </section>
-
-        <section class="box-test" id="box-test-section" aria-labelledby="box-test-title">
-          <h2 id="box-test-title">Box test</h2>
-          <p class="detail">
-            3 jumps per height · ~1 min rest between jumps · 2–3 min between heights. Use this for the
-            4-week profile retest.
-          </p>
-          <label class="field" for="box-test-type">
-            Jump type
-            <select id="box-test-type">
-              <option value="drop">Drop jump</option>
-              <option value="depth">Depth jump</option>
-            </select>
-          </label>
-          <fieldset id="box-test-heights">
-            <legend>Box heights (pick 3–5)</legend>
-            <div class="chips" id="box-test-height-chips">
-              <label><input type="checkbox" value="6" checked /> 6</label>
-              <label><input type="checkbox" value="12" checked /> 12</label>
-              <label><input type="checkbox" value="18" checked /> 18</label>
-              <label><input type="checkbox" value="24" checked /> 24</label>
-              <label><input type="checkbox" value="30" /> 30</label>
-            </div>
-          </fieldset>
-          <p id="box-test-status" class="detail baseline-status"></p>
-          <button type="button" id="box-test-start" class="button-secondary">Start box test</button>
-          <button type="button" id="box-test-finish" class="button-primary" hidden>
-            Finish &amp; recommend
-          </button>
-          <p id="box-test-result" class="detail" hidden></p>
-          <div id="box-test-chart"></div>
-        </section>
-
-        <section class="chart-section" id="chart-section" aria-labelledby="chart-title">
-          <h2 id="chart-title">By date</h2>
-          <label class="field" for="chart-metric">
-            Metric
-            <select id="chart-metric">
-              <option value="heightIn">Jump height</option>
-              <option value="gctMs">Contact time</option>
-              <option value="rsi">RSI</option>
-            </select>
-          </label>
-          <label class="field" for="chart-jump-type">
-            Jump type
-            <select id="chart-jump-type">
-              <option value="drop">Drop jump</option>
-              <option value="depth">Depth jump</option>
-              <option value="all">Both</option>
-            </select>
-          </label>
-          <div id="chart-root"></div>
-          <p id="chart-legend" class="chart-legend"></p>
-        </section>
-
         <div id="empty-video" class="empty">
-          <h2>Load a slo-mo clip</h2>
+          <h3>Load a slo-mo clip</h3>
           <p>Pick a side-on jump from the camera roll.</p>
           <label class="button-primary file-button" for="video-input">Choose video</label>
         </div>
@@ -209,24 +203,27 @@
           </p>
           <p id="time-label" class="time-readout">0.000 s</p>
 
-          <label class="field" for="fps">
-            Measured frame rate
-            <input id="fps" type="number" inputmode="decimal" min="1" step="0.1" value="240" readonly />
-          </label>
-
-          <label class="field" for="slowmo">
-            Slow-mo playback factor
-            <input id="slowmo" type="number" inputmode="decimal" min="1" step="0.1" value="1" />
-          </label>
-          <div class="chips" id="slowmo-chips">
-            <button type="button" data-factor="1">1×</button>
-            <button type="button" data-factor="2">2×</button>
-            <button type="button" data-factor="4">4×</button>
-            <button type="button" data-factor="8">8×</button>
-            <button type="button" id="detect-cadence">Detect</button>
-          </div>
-          <p id="timing-readout" class="cadence-status">Measuring frame times…</p>
-          <p id="cadence-status" class="cadence-status" role="status"></p>
+          <details class="advanced">
+            <summary>Advanced · timing &amp; build</summary>
+            <label class="field" for="fps">
+              Measured frame rate
+              <input id="fps" type="number" inputmode="decimal" min="1" step="0.1" value="240" readonly />
+            </label>
+            <label class="field" for="slowmo">
+              Slow-mo playback factor
+              <input id="slowmo" type="number" inputmode="decimal" min="1" step="0.1" value="1" />
+            </label>
+            <div class="chips" id="slowmo-chips">
+              <button type="button" data-factor="1">1×</button>
+              <button type="button" data-factor="2">2×</button>
+              <button type="button" data-factor="4">4×</button>
+              <button type="button" data-factor="8">8×</button>
+              <button type="button" id="detect-cadence">Detect</button>
+            </div>
+            <p id="timing-readout" class="cadence-status">Measuring frame times…</p>
+            <p id="cadence-status" class="cadence-status" role="status"></p>
+            <p class="build-line">Build <span id="build-label">2026-10-14i</span></p>
+          </details>
 
           <div class="transport" role="group" aria-label="Frame step">
             <button type="button" id="step-back-10" data-step="-10" disabled>−10</button>
@@ -253,10 +250,11 @@
             <p id="detect-status" role="status"></p>
           </div>
 
+          <h3 class="section-label">Event marks</h3>
           <div class="marks">
             <article class="mark" data-event="stepoff">
               <div>
-                <h3>Step-off (last frame on box)</h3>
+                <h3>Step-off</h3>
                 <p id="so-frame">Not set</p>
               </div>
               <div class="mark-actions">
@@ -300,6 +298,7 @@
             </article>
           </div>
 
+          <h3 class="section-label">Jump details</h3>
           <form id="jump-form">
             <fieldset>
               <legend>Jump type</legend>
@@ -357,26 +356,29 @@
 
           <section class="metrics" aria-live="polite">
             <div class="metrics-head">
-              <h2>Provisional</h2>
+              <h3 class="section-label">Metrics</h3>
               <p id="metrics-hint">Mark touchdown, takeoff, and landing.</p>
             </div>
-            <dl id="metrics-values" hidden>
-              <div>
-                <dt>Jump height (in)</dt>
+            <dl id="metrics-values" class="metric-cards" hidden>
+              <div class="metric-card">
+                <dt>Jump height</dt>
                 <dd id="m-height">—</dd>
-                <dd id="m-height-cm" class="sub">—</dd>
+                <dd id="m-height-cm" class="sub">in</dd>
               </div>
-              <div>
-                <dt>Contact time (ms)</dt>
+              <div class="metric-card">
+                <dt>Contact time</dt>
                 <dd id="m-gct">—</dd>
+                <dd class="sub">ms</dd>
               </div>
-              <div>
-                <dt>Flight time (ms)</dt>
+              <div class="metric-card">
+                <dt>Flight time</dt>
                 <dd id="m-ft">—</dd>
+                <dd class="sub">ms</dd>
               </div>
-              <div>
+              <div class="metric-card">
                 <dt>RSI</dt>
                 <dd id="m-rsi">—</dd>
+                <dd class="sub">ratio</dd>
               </div>
             </dl>
             <p id="metrics-warning" class="form-error" role="alert" hidden></p>
@@ -389,8 +391,41 @@
           <label class="button-secondary file-button" for="video-input">Replace video</label>
         </div>
 
+        <section class="session" id="session-section" aria-labelledby="session-title">
+          <h3 class="section-label" id="session-title">Today’s session</h3>
+          <label class="field" for="gct-target">
+            Contact target (ms)
+            <input id="gct-target" type="number" inputmode="numeric" min="1" step="1" value="250" />
+          </label>
+          <p id="profile-retest" class="detail baseline-status" hidden></p>
+          <p id="session-empty">No jumps saved today yet.</p>
+          <ul id="session-list"></ul>
+        </section>
+
+        <section class="chart-section" id="chart-section" aria-labelledby="chart-title">
+          <h3 class="section-label" id="chart-title">By date</h3>
+          <label class="field" for="chart-metric">
+            Metric
+            <select id="chart-metric">
+              <option value="heightIn">Jump height</option>
+              <option value="gctMs">Contact time</option>
+              <option value="rsi">RSI</option>
+            </select>
+          </label>
+          <label class="field" for="chart-jump-type">
+            Jump type
+            <select id="chart-jump-type">
+              <option value="drop">Drop jump</option>
+              <option value="depth">Depth jump</option>
+              <option value="all">Both</option>
+            </select>
+          </label>
+          <div id="chart-root"></div>
+          <p id="chart-legend" class="chart-legend"></p>
+        </section>
+
         <section class="saved" aria-labelledby="saved-title">
-          <h2 id="saved-title">Saved on this phone <span id="saved-count">0</span></h2>
+          <h3 class="section-label" id="saved-title">Saved jumps <span id="saved-count">0</span></h3>
           <p id="saved-empty">No jumps saved on this phone yet.</p>
           <ul id="jump-list"></ul>
         </section>
