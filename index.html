@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f3f0e7" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -14,13 +15,13 @@
       content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Jump Lab</title>
+    <title>Jump Lab · 2026-10-14d</title>
   </head>
   <body>
     <div id="app">
       <header class="top">
         <div>
-          <p class="eyebrow">Byron</p>
+          <p class="eyebrow">Byron · build <span id="build-label">2026-10-14d</span></p>
           <h1>Jump Lab</h1>
         </div>
         <div class="menu">
@@ -83,6 +84,34 @@
 
       <section id="analyze" hidden>
         <p class="privacy">The clip stays on this phone. A saved jump stores frames and numbers only.</p>
+
+        <section class="session" id="session-section" aria-labelledby="session-title">
+          <h2 id="session-title">Today’s session</h2>
+          <p id="session-empty">No jumps saved today yet.</p>
+          <ul id="session-list"></ul>
+        </section>
+
+        <section class="chart-section" id="chart-section" aria-labelledby="chart-title">
+          <h2 id="chart-title">By box height</h2>
+          <label class="field" for="chart-metric">
+            Metric
+            <select id="chart-metric">
+              <option value="heightIn">Jump height</option>
+              <option value="gctMs">Contact time</option>
+              <option value="rsi">RSI</option>
+            </select>
+          </label>
+          <label class="field" for="chart-jump-type">
+            Jump type
+            <select id="chart-jump-type">
+              <option value="drop">Drop jump</option>
+              <option value="depth">Depth jump</option>
+              <option value="all">Both</option>
+            </select>
+          </label>
+          <div id="chart-root"></div>
+          <p id="chart-legend" class="chart-legend"></p>
+        </section>
 
         <div id="empty-video" class="empty">
           <h2>Load a slo-mo clip</h2>
@@ -289,34 +318,6 @@
 
           <label class="button-secondary file-button" for="video-input">Replace video</label>
         </div>
-
-        <section class="session" aria-labelledby="session-title">
-          <h2 id="session-title">Today’s session</h2>
-          <p id="session-empty">No jumps saved today yet.</p>
-          <ul id="session-list"></ul>
-        </section>
-
-        <section class="chart-section" aria-labelledby="chart-title">
-          <h2 id="chart-title">By box height</h2>
-          <label class="field" for="chart-metric">
-            Metric
-            <select id="chart-metric">
-              <option value="heightIn">Jump height</option>
-              <option value="gctMs">Contact time</option>
-              <option value="rsi">RSI</option>
-            </select>
-          </label>
-          <label class="field" for="chart-jump-type">
-            Jump type
-            <select id="chart-jump-type">
-              <option value="drop">Drop jump</option>
-              <option value="depth">Depth jump</option>
-              <option value="all">Both</option>
-            </select>
-          </label>
-          <div id="chart-root"></div>
-          <p id="chart-legend" class="chart-legend"></p>
-        </section>
 
         <section class="saved" aria-labelledby="saved-title">
           <h2 id="saved-title">Saved on this phone <span id="saved-count">0</span></h2>

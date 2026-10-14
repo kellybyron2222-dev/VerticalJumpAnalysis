@@ -116,7 +116,9 @@ let sloMoHint: { slowMoPlayback?: boolean | null } = {};
 /** Timestamps parsed from the file. Playback sampling is only the fallback. */
 let clockRead: Promise<number[] | null> = Promise.resolve(null);
 
-const BUILD_ID = "2026-10-14c";
+const BUILD_ID = "2026-10-14d";
+const buildLabel = document.querySelector("#build-label");
+if (buildLabel) buildLabel.textContent = BUILD_ID;
 
 cadenceButton.addEventListener("click", () => {
   void detectCadence();
@@ -723,6 +725,7 @@ function onSave(): void {
   saveStatus.textContent = "Jump saved on this phone.";
   render();
   renderTrials();
+  must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });
 }
 
 function renderTrials(): void {
@@ -730,17 +733,29 @@ function renderTrials(): void {
   if (pendingDeleteId && !trials.some((trial) => trial.id === pendingDeleteId)) {
     pendingDeleteId = null;
   }
+  // Session + chart first so a chart paint error cannot hide them behind only the list.
+  try {
+    renderSession(trials);
+  } catch {
+    sessionEmpty.hidden = false;
+    sessionEmpty.textContent = "Could not load today’s session.";
+  }
+  try {
+    renderHistory();
+  } catch {
+    chartRoot.replaceChildren();
+    chartLegend.textContent = "Could not draw the box chart.";
+  }
   savedCount.textContent = String(trials.length);
   savedEmpty.hidden = trials.length > 0;
   jumpList.replaceChildren();
   for (const trial of trials) jumpList.append(renderTrial(trial));
-  renderSession(trials);
-  renderHistory();
 }
 
 function renderSession(trials: TrialRecord[]): void {
   const groups = sessionsForDay(trials);
   sessionEmpty.hidden = groups.length > 0;
+  sessionEmpty.textContent = "No jumps saved today yet.";
   sessionList.replaceChildren();
   for (const group of groups) {
     const item = document.createElement("li");
@@ -769,7 +784,7 @@ function renderHistory(): void {
   chartRoot.replaceChildren(renderBoxChart(series, metric));
   chartLegend.textContent =
     series.length === 0
-      ? ""
+      ? "No saved jumps yet — chart stays empty until you save."
       : `${metricLabel(metric)} · weeks: ${series.map((entry) => `${entry.label}${jumpType ? "" : ` ${entry.jumpType}`}`).join(", ")}`;
 }
 

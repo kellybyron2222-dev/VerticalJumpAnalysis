@@ -608,11 +608,22 @@ legend {
 }
 
 .session,
-.chart-section,
+.chart-section {
+  display: block;
+  margin: 1.25rem 0;
+  padding: 0.85rem 0 1rem;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
 .saved {
   margin-top: 2rem;
   padding-top: 1rem;
   border-top: 1px solid var(--line);
+}
+
+#build-label {
+  font-variant-numeric: tabular-nums;
 }
 
 #session-list,
