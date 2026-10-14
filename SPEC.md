@@ -125,9 +125,14 @@ Done when:
 - No Microsoft login, MSAL, or Graph. Unit tests cover row mapping.
 - **GitHub jump log (source of truth):** fine-grained PAT (Contents read/write on this repo only) stored in localStorage only — never committed or logged. Directions explain how to create the token. On load (when a token is set) the app fetches the remote log; localStorage is only a cache/outbox. Every save/edit/delete writes the full log immediately via GitHub REST Contents API (`PUT …/contents/data/jump-log.csv` and `data/jump-log.json`) on branch `data` (created from `main` if missing) so log commits do not trigger Pages on `main`. Sha retry; dirty outbox shows **Pending sync**; **Sync now** + last-synced status; empty-remote heal and mid-sync re-read so CSV includes rows. UI: “Saved to your jump log” / “Saved, will sync”; section **Jump log**. Unit tests cover CSV rows, merge, heal, and mid-sync PUT.
 
-### Later — Multi-jump clips (after Excel)
+### Milestone 6 — Multi-jump clips
 
-After Milestone 5 export works: support sets of 1–4 jumps in one clip. Split each jump from its step-off; warn if a jump falls outside the slowed section of the file.
+Done when:
+
+- Auto-detect finds several jumps in one clip (step-off / touchdown / takeoff / landing cycles), splitting on standing periods; coarse scan then refine for long clips with progress.
+- Per-jump results with nudge, include toggle, set summary (mean/best); save included jumps tagged with `setId`.
+- Warn when a jump falls outside the slowed (high-capture-rate) section.
+- Single-jump clips keep the previous one-mark UI path. Unit tests cover multi segmentation and slowed-region detection from PTS.
 
 ## Hosting
 

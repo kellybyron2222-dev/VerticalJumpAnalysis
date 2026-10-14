@@ -1,5 +1,15 @@
 import { FilesetResolver, PoseLandmarker, type NormalizedLandmark } from "@mediapipe/tasks-vision";
-import { detectEvents, type Detection, type FootSample } from "./detect.ts";
+import {
+  coarseFrames,
+  detectAllEvents,
+  refineFrames,
+  type DetectedEvents,
+  type Detection,
+  type FootSample,
+  type GroundModel,
+  type MultiDetection,
+} from "./detect.ts";
+import { scanStep } from "./multiJump.ts";
 import type { FrameSeeker } from "./seek.ts";
 
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
@@ -64,22 +74,21 @@ export interface AnalyzeOptions {
   signal: AbortSignal;
 }
 
-export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
-  const { video, seeker, frameCount, onProgress, signal } = options;
-  onProgress("Loading pose model…");
-  const landmarker = await loadLandmarker();
-
-  const scale = Math.min(1, INPUT_EDGE / Math.max(video.videoWidth, video.videoHeight));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return { ok: false, reason: "Canvas is not available." };
-
-  // Every presentation frame from the chosen file — not a 1-in-N subsample.
+async function sampleFrames(
+  landmarker: PoseLandmarker,
+  video: HTMLVideoElement,
+  seeker: FrameSeeker,
+  frames: readonly number[],
+  canvas: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+  signal: AbortSignal,
+  onProgress: (message: string) => void,
+  label: string,
+): Promise<FootSample[]> {
   const samples: FootSample[] = [];
-  for (let frame = 0; frame < frameCount; frame += 1) {
+  for (let i = 0; i < frames.length; i += 1) {
     if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+    const frame = frames[i]!;
     await seeker.settle(frame);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const result = landmarker.detect(canvas);
@@ -88,8 +97,86 @@ export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
     if (y !== null) {
       samples.push(upper === null ? { frame, footY: y } : { frame, footY: y, upperFootY: upper });
     }
-    if (frame % 8 === 0) onProgress(`Scanning ${frame + 1} / ${frameCount}`);
+    if (i % 8 === 0) onProgress(`${label} ${i + 1} / ${frames.length}`);
   }
-
-  return detectEvents(samples);
+  return samples;
 }
+
+function prepareCanvas(video: HTMLVideoElement): {
+  canvas: HTMLCanvasElement;
+  context: CanvasRenderingContext2D;
+} | null {
+  const scale = Math.min(1, INPUT_EDGE / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+  return { canvas, context };
+}
+
+export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
+  const multi = await analyzeMultiClip(options);
+  if (!multi.ok) return multi;
+  const events = multi.jumps[0];
+  if (!events) return { ok: false, reason: "No jump found." };
+  return { ok: true, model: multi.model, events };
+}
+
+/**
+ * Coarse scan of the whole clip, then refine around each candidate jump.
+ * Returns every jump cycle found (1 for a single-jump clip).
+ */
+export async function analyzeMultiClip(
+  options: AnalyzeOptions,
+): Promise<MultiDetection & { samples?: FootSample[] }> {
+  const { video, seeker, frameCount, onProgress, signal } = options;
+  onProgress("Loading pose model…");
+  const landmarker = await loadLandmarker();
+  const prepared = prepareCanvas(video);
+  if (!prepared) return { ok: false, reason: "Canvas is not available." };
+  const { canvas, context } = prepared;
+
+  const step = scanStep(frameCount);
+  const coarse = coarseFrames(frameCount, step);
+  onProgress(`Coarse scan ${coarse.length} frames…`);
+  const coarseSamples = await sampleFrames(
+    landmarker,
+    video,
+    seeker,
+    coarse,
+    canvas,
+    context,
+    signal,
+    onProgress,
+    "Coarse",
+  );
+
+  const first = detectAllEvents(coarseSamples);
+  if (!first.ok) return first;
+
+  const refineSet = new Set<number>();
+  for (const jump of first.jumps) {
+    for (const frame of refineFrames(jump, Math.max(step, 2), frameCount)) refineSet.add(frame);
+  }
+  const refineList = [...refineSet].sort((a, b) => a - b);
+  onProgress(`Refining ${refineList.length} frames around ${first.jumps.length} jump(s)…`);
+  const fineSamples = await sampleFrames(
+    landmarker,
+    video,
+    seeker,
+    refineList,
+    canvas,
+    context,
+    signal,
+    onProgress,
+    "Refine",
+  );
+
+  const merged = [...coarseSamples, ...fineSamples];
+  const refined = detectAllEvents(merged, { fixedModel: first.model });
+  if (!refined.ok) return first;
+  return refined;
+}
+
+export type { DetectedEvents, GroundModel };

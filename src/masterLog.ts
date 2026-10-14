@@ -103,7 +103,7 @@ export function trialToMasterRow(trial: TrialRecord): MasterLogRow {
     trial.notes ?? "",
     trial.jumpType,
     round1(trial.flightMs),
-    trial.boxTestId ?? "",
+    trial.boxTestId ?? trial.setId ?? "",
   ];
 }
 

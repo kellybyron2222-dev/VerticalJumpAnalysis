@@ -19,7 +19,13 @@ import {
 import { trialFormError } from "./form.ts";
 import { collectFrameTimes, transportEnabledAfterClockRead } from "./cadence.ts";
 import { parseMovClip } from "./mov.ts";
-import { analyzeClip } from "./pose.ts";
+import { analyzeMultiClip } from "./pose.ts";
+import {
+  buildMultiJumpRows,
+  createSetId,
+  summarizeSet,
+  type MultiJumpRow,
+} from "./multiJump.ts";
 import { previewMetrics, realSecondsOnClock } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
 import {
@@ -117,6 +123,12 @@ const formError = must<HTMLElement>("#form-error");
 const saveStatus = must<HTMLElement>("#save-status");
 const savedCount = must<HTMLElement>("#saved-count");
 const savedEmpty = must<HTMLElement>("#saved-empty");
+const multiJumpPanel = must<HTMLElement>("#multi-jump-panel");
+const multiJumpList = must<HTMLElement>("#multi-jump-list");
+const multiJumpSummary = must<HTMLElement>("#multi-jump-summary");
+const multiJumpStatus = must<HTMLElement>("#multi-jump-status");
+const multiJumpSave = must<HTMLButtonElement>("#multi-jump-save");
+let multiJumpRows: MultiJumpRow[] = [];
 const jumpList = must<HTMLUListElement>("#jump-list");
 const sessionEmpty = must<HTMLElement>("#session-empty");
 const sessionList = must<HTMLUListElement>("#session-list");
@@ -1034,8 +1046,10 @@ async function runDetection(): Promise<void> {
   fpsInput.disabled = true;
   cancelDetect.hidden = false;
   clearFeedback();
+  multiJumpPanel.hidden = true;
+  multiJumpRows = [];
   try {
-    const result = await analyzeClip({
+    const result = await analyzeMultiClip({
       video,
       seeker,
       frameCount: count,
@@ -1052,19 +1066,33 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = `Auto-detect failed: ${result.reason} Mark the frames by hand.`;
       return;
     }
-    marks.stepOff = stepOffForFall(
-      result.events.stepOff,
-      result.events.touchdown,
-      frameTimes ?? undefined,
-      activeStretch(),
-    );
-    marks.touchdown = result.events.touchdown;
-    marks.takeoff = result.events.takeoff;
-    marks.landing = result.events.landing;
-    frame = result.events.touchdown;
+    const stretch = activeStretch();
+    const jumps = result.jumps.map((events) => ({
+      ...events,
+      stepOff: stepOffForFall(events.stepOff, events.touchdown, frameTimes ?? undefined, stretch),
+    }));
+    if (jumps.length === 1) {
+      const events = jumps[0]!;
+      marks.stepOff = events.stepOff;
+      marks.touchdown = events.touchdown;
+      marks.takeoff = events.takeoff;
+      marks.landing = events.landing;
+      frame = events.touchdown;
+      maybePrefillBox();
+      detectStatus.textContent =
+        "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
+      return;
+    }
+    multiJumpRows = buildMultiJumpRows(jumps, frameTimes ?? undefined, fps, stretch);
+    renderMultiJumpPanel();
+    const first = jumps[0]!;
+    marks.stepOff = first.stepOff;
+    marks.touchdown = first.touchdown;
+    marks.takeoff = first.takeoff;
+    marks.landing = first.landing;
+    frame = first.touchdown;
     maybePrefillBox();
-    detectStatus.textContent =
-      "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
+    detectStatus.textContent = `Found ${jumps.length} jumps. Review the set below, then save included jumps.`;
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
     else detectStatus.textContent = `Auto-detect failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -1079,6 +1107,142 @@ async function runDetection(): Promise<void> {
       }
     }
   }
+}
+
+function renderMultiJumpPanel(): void {
+  const fps = readFps();
+  if (fps === null || multiJumpRows.length === 0) {
+    multiJumpPanel.hidden = true;
+    return;
+  }
+  multiJumpPanel.hidden = false;
+  const stretch = activeStretch();
+  multiJumpRows = buildMultiJumpRows(
+    multiJumpRows.map((row) => row.events),
+    frameTimes ?? undefined,
+    fps,
+    stretch,
+  ).map((row, i) => ({ ...row, include: multiJumpRows[i]?.include ?? true }));
+  const summary = summarizeSet(multiJumpRows);
+  multiJumpSummary.textContent =
+    summary.count === 0
+      ? "No jumps included."
+      : `Included ${summary.count}: mean height ${summary.meanHeightIn?.toFixed(1)} in (best ${summary.bestHeightIn?.toFixed(1)}), mean GCT ${summary.meanGctMs?.toFixed(0)} ms, mean RSI ${summary.meanRsi?.toFixed(2)} (best ${summary.bestRsi?.toFixed(2)}).`;
+  multiJumpList.replaceChildren();
+  for (const row of multiJumpRows) {
+    const li = document.createElement("li");
+    li.className = "multi-jump-item";
+    const head = document.createElement("label");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.checked = row.include;
+    check.addEventListener("change", () => {
+      row.include = check.checked;
+      renderMultiJumpPanel();
+    });
+    head.append(
+      check,
+      document.createTextNode(
+        ` Jump ${row.index + 1}: height ${row.heightIn?.toFixed(1) ?? "—"} in · GCT ${row.gctMs?.toFixed(0) ?? "—"} ms · RSI ${row.rsi?.toFixed(2) ?? "—"}`,
+      ),
+    );
+    li.append(head);
+    if (row.outsideSlow) {
+      const warn = document.createElement("p");
+      warn.className = "warn";
+      warn.textContent = "Outside slowed (high-capture-rate) section — timing less accurate.";
+      li.append(warn);
+    }
+    const nudge = document.createElement("div");
+    nudge.className = "multi-jump-nudge";
+    for (const key of ["touchdown", "takeoff", "landing"] as const) {
+      const label = key === "touchdown" ? "TD" : key === "takeoff" ? "TO" : "LD";
+      for (const delta of [-1, 1]) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = `${label}${delta < 0 ? "−" : "+"}`;
+        btn.addEventListener("click", () => {
+          const next = {
+            ...row.events,
+            [key]: Math.max(0, row.events[key] + delta),
+          };
+          if (!(next.touchdown < next.takeoff && next.takeoff < next.landing)) return;
+          row.events = next;
+          marks.stepOff = next.stepOff;
+          marks.touchdown = next.touchdown;
+          marks.takeoff = next.takeoff;
+          marks.landing = next.landing;
+          frame = next[key];
+          renderMultiJumpPanel();
+          setFrame(frame);
+        });
+        nudge.append(btn);
+      }
+    }
+    const go = document.createElement("button");
+    go.type = "button";
+    go.textContent = "Go to TD";
+    go.addEventListener("click", () => {
+      marks.stepOff = row.events.stepOff;
+      marks.touchdown = row.events.touchdown;
+      marks.takeoff = row.events.takeoff;
+      marks.landing = row.events.landing;
+      setFrame(row.events.touchdown);
+    });
+    nudge.append(go);
+    li.append(nudge);
+    multiJumpList.append(li);
+  }
+}
+
+multiJumpSave.addEventListener("click", () => {
+  void saveMultiJumpSet();
+});
+
+async function saveMultiJumpSet(): Promise<void> {
+  const fps = readFps();
+  const jumpType = selectedValue("jumpType");
+  const arm = selectedValue("armSwing");
+  const boxHeightIn = readBox();
+  if (fps === null || boxHeightIn === null || (jumpType !== "drop" && jumpType !== "depth") || arm === null) {
+    multiJumpStatus.textContent = "Set jump type, box height, and arm swing first.";
+    return;
+  }
+  const included = multiJumpRows.filter((row) => row.include);
+  if (included.length === 0) {
+    multiJumpStatus.textContent = "Include at least one jump.";
+    return;
+  }
+  const setId = createSetId();
+  const stretch = activeStretch();
+  const created: TrialRecord[] = [];
+  for (const row of included) {
+    const trial = createTrial({
+      fps,
+      jumpType,
+      boxHeightIn,
+      armSwing: arm === "yes",
+      notes: notesInput.value,
+      touchdownFrame: row.events.touchdown,
+      takeoffFrame: row.events.takeoff,
+      landingFrame: row.events.landing,
+      slowMoFactor: stretch,
+      stepOffFrame: row.events.stepOff,
+      setId,
+      frameTimes: frameTimes ?? undefined,
+    });
+    if (trial) created.push(trial);
+  }
+  if (created.length === 0) {
+    multiJumpStatus.textContent = "Could not build trials from marks.";
+    return;
+  }
+  const existing = loadTrials(localStorage);
+  const synced = await persistJumpLog([...created, ...existing]);
+  multiJumpStatus.textContent = synced
+    ? `Saved ${created.length} jumps to your jump log (${setId}).`
+    : `Saved ${created.length} jumps, will sync (${setId}).`;
+  renderTrials();
 }
 
 function step(delta: number): void {

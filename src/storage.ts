@@ -27,6 +27,8 @@ export interface TrialRecord {
   stepOffFrame?: number;
   /** Optimal-box test session id, when this jump was recorded in Box test mode. */
   boxTestId?: string;
+  /** Multi-jump clip set id, when saved from a multi-jump analysis. */
+  setId?: string;
 }
 
 export interface NewTrialInput {
@@ -41,6 +43,7 @@ export interface NewTrialInput {
   slowMoFactor?: number;
   stepOffFrame?: number | null;
   boxTestId?: string;
+  setId?: string;
   frameTimes?: readonly number[];
   id?: string;
   createdAt?: string;
@@ -100,7 +103,7 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
   if (!Number.isFinite(input.boxHeightIn) || input.boxHeightIn <= 0) return null;
   if (input.jumpType !== "drop" && input.jumpType !== "depth") return null;
 
-  const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame" | "boxTestId"> = {};
+  const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame" | "boxTestId" | "setId"> = {};
   if (input.slowMoFactor !== undefined && Number.isFinite(input.slowMoFactor) && input.slowMoFactor > 0) {
     extra.slowMoFactor = input.slowMoFactor;
   }
@@ -114,6 +117,9 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
   }
   if (typeof input.boxTestId === "string" && input.boxTestId.length > 0) {
     extra.boxTestId = input.boxTestId;
+  }
+  if (typeof input.setId === "string" && input.setId.length > 0) {
+    extra.setId = input.setId;
   }
 
   return {

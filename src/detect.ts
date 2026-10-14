@@ -89,28 +89,7 @@ export function groundModel(samples: readonly FootSample[]): GroundModel | null 
   return { ground, start, tolerance };
 }
 
-/**
- * Finds the first floor contact after leaving the box, the takeoff from it,
- * and the next floor contact. Frames are the first frame of each state:
- * touchdown and landing are the first frames on the floor, takeoff is the
- * first frame off it. Output depends only on the samples, so identical input
- * always gives identical marks.
- */
-export function detectEvents(
-  samples: readonly FootSample[],
-  fixedModel?: GroundModel,
-  minAirFrames = 6,
-): Detection {
-  const ordered = sortedSamples(samples);
-  const model = fixedModel ?? groundModel(ordered);
-  if (!model) return { ok: false, reason: "Not enough frames with a visible foot." };
-
-  const onGround = ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
-
-  let i = 0;
-  while (i < ordered.length && onGround[i]) i += 1;
-  if (i === ordered.length) return { ok: false, reason: "The feet never leave the floor." };
-
+function contactHelpers(ordered: readonly FootSample[], onGround: readonly boolean[], minAirFrames: number) {
   const nextContact = (from: number): number => {
     let index = from;
     while (index < ordered.length && !onGround[index]) index += 1;
@@ -129,24 +108,117 @@ export function detectEvents(
     }
     return index;
   };
+  return { nextContact, nextAir };
+}
 
-  const tdIndex = nextContact(i);
-  if (tdIndex >= ordered.length) return { ok: false, reason: "No touchdown found." };
-  const toIndex = nextAir(tdIndex);
-  if (toIndex >= ordered.length) return { ok: false, reason: "No takeoff found." };
-  const ldIndex = nextContact(toIndex);
-  if (ldIndex >= ordered.length) return { ok: false, reason: "No landing found." };
+/**
+ * Last frame on the box before touchdown, searching only within [fromIndex, tdIndex).
+ */
+function findStepOffInRange(
+  ordered: readonly FootSample[],
+  tdIndex: number,
+  fromIndex: number,
+  ground: number,
+): number | null {
+  const level = (sample: FootSample) => sample.upperFootY ?? sample.footY;
+  const window = ordered.slice(Math.max(0, fromIndex), tdIndex);
+  if (window.length < 3) return findStepOff(ordered, tdIndex, ground);
+  const head = window.slice(0, Math.max(3, Math.floor(window.length * 0.25))).map(level);
+  const box = quantile(head, 0.5);
+  const drop = ground - box;
+  if (drop < 0.02) return null;
+  const tolerance = Math.min(0.01, Math.max(0.003, drop * 0.03));
+  for (let k = tdIndex - 1; k >= fromIndex; k -= 1) {
+    if (level(ordered[k]) <= box + tolerance) return ordered[k].frame;
+  }
+  return null;
+}
 
-  return {
-    ok: true,
-    model,
-    events: {
-      stepOff: findStepOff(ordered, tdIndex, model.ground),
+/**
+ * Finds the first floor contact after leaving the box, the takeoff from it,
+ * and the next floor contact. Frames are the first frame of each state:
+ * touchdown and landing are the first frames on the floor, takeoff is the
+ * first frame off it. Output depends only on the samples, so identical input
+ * always gives identical marks.
+ */
+export function detectEvents(
+  samples: readonly FootSample[],
+  fixedModel?: GroundModel,
+  minAirFrames = 6,
+): Detection {
+  const all = detectAllEvents(samples, { fixedModel, minAirFrames, maxJumps: 1 });
+  if (!all.ok) return all;
+  const events = all.jumps[0];
+  if (!events) return { ok: false, reason: "No jump found." };
+  return { ok: true, model: all.model, events };
+}
+
+export type MultiDetection =
+  | { ok: true; jumps: DetectedEvents[]; model: GroundModel }
+  | { ok: false; reason: string };
+
+/**
+ * Find every drop/depth cycle in one clip. Splits between jumps on standing
+ * periods after landing (minStandFrames on the floor before the next leave).
+ */
+export function detectAllEvents(
+  samples: readonly FootSample[],
+  options: {
+    fixedModel?: GroundModel;
+    minAirFrames?: number;
+    minStandFrames?: number;
+    maxJumps?: number;
+  } = {},
+): MultiDetection {
+  const minAirFrames = options.minAirFrames ?? 6;
+  const minStandFrames = options.minStandFrames ?? 12;
+  const maxJumps = options.maxJumps ?? 8;
+  const ordered = sortedSamples(samples);
+  const model = options.fixedModel ?? groundModel(ordered);
+  if (!model) return { ok: false, reason: "Not enough frames with a visible foot." };
+
+  const onGround = ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
+  const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
+  const jumps: DetectedEvents[] = [];
+  let i = 0;
+  let searchFrom = 0;
+
+  while (jumps.length < maxJumps && i < ordered.length) {
+    while (i < ordered.length && onGround[i]) i += 1;
+    if (i >= ordered.length) break;
+
+    const tdIndex = nextContact(i);
+    if (tdIndex >= ordered.length) break;
+    const toIndex = nextAir(tdIndex);
+    if (toIndex >= ordered.length) break;
+    const ldIndex = nextContact(toIndex);
+    if (ldIndex >= ordered.length) break;
+
+    jumps.push({
+      stepOff: findStepOffInRange(ordered, tdIndex, searchFrom, model.ground),
       touchdown: ordered[tdIndex].frame,
       takeoff: ordered[toIndex].frame,
       landing: ordered[ldIndex].frame,
-    },
-  };
+    });
+
+    // Standing run after landing separates jumps.
+    let stand = 0;
+    let j = ldIndex;
+    while (j < ordered.length && onGround[j]) {
+      stand += 1;
+      j += 1;
+    }
+    searchFrom = ldIndex;
+    if (stand < minStandFrames) {
+      // Not enough still time — continue after this landing without treating the next leave as a clean split.
+      i = Math.min(ordered.length, ldIndex + 1);
+      continue;
+    }
+    i = ldIndex;
+  }
+
+  if (jumps.length === 0) return { ok: false, reason: "No jump found." };
+  return { ok: true, model, jumps };
 }
 
 /** Frames to sample at full resolution around each coarse event. */
