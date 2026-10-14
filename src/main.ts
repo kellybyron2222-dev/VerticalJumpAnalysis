@@ -401,6 +401,17 @@ showScreen(firstVisit ? "directions" : "analyze");
 renderTrials();
 render();
 
+/** Test/analyze hook: inject presentation timestamps after a clip is loaded. */
+(window as Window & { __jumpLabApplyPts?: (times: number[]) => void }).__jumpLabApplyPts = (
+  times: number[],
+) => {
+  if (!Array.isArray(times) || times.length < 2) return;
+  sloMoHint = { slowMoPlayback: true };
+  applyFrameClock(times);
+  onReady();
+  if (!measuring && !detecting) setTransportEnabled(true);
+};
+
 function initMasterLogUi(): void {
   for (const button of document.querySelectorAll<HTMLButtonElement>("#master-table [data-sort]")) {
     button.addEventListener("click", () => {

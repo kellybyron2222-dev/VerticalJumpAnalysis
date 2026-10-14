@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 
 const root = join(process.cwd(), "dist");
+const pts = JSON.parse(await readFile(join(process.cwd(), "src/fixtures/img0228-pts.json"), "utf8"));
 const types = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -30,13 +31,14 @@ const server = createServer(async (req, res) => {
 });
 
 await new Promise((resolve) => server.listen(4789, "127.0.0.1", resolve));
+console.log("server up", pts.length, "pts");
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
 page.setDefaultTimeout(600_000);
-const logs = [];
-page.on("console", (msg) => logs.push(msg.text()));
+page.on("console", (msg) => console.log("console:", msg.text()));
 
 await page.goto("http://127.0.0.1:4789/?b=2026-10-14o");
+await page.getByRole("button", { name: "Jump Analysis" }).click().catch(() => {});
 await page.evaluate(async () => {
   const res = await fetch("multi_small.mp4");
   const blob = await res.blob();
@@ -47,26 +49,35 @@ await page.evaluate(async () => {
   input.files = dt.files;
   input.dispatchEvent(new Event("change", { bubbles: true }));
 });
-
+await page.waitForTimeout(2000);
+await page.evaluate((times) => {
+  window.__jumpLabApplyPts?.(times);
+}, pts);
 await page.waitForFunction(() => {
   const btn = document.querySelector("#auto-detect");
   return btn && !btn.disabled;
-}, null, { timeout: 120_000 });
-
+}, null, { timeout: 60_000 });
+console.log("auto-detect enabled, starting…");
 await page.click("#auto-detect");
-await page.waitForFunction(() => {
-  const status = document.querySelector("#detect-status")?.textContent ?? "";
-  const panel = document.querySelector("#multi-jump-panel");
-  const multi = panel && !panel.hidden;
-  const single = /Auto marks set|Found \d+ jumps/.test(status);
-  const fail = /failed/i.test(status);
-  return multi || single || fail;
-}, null, { timeout: 540_000 });
+
+let last = "";
+for (let i = 0; i < 600; i += 1) {
+  const status = await page.locator("#detect-status").innerText().catch(() => "");
+  if (status !== last) {
+    console.log("status:", status);
+    last = status;
+  }
+  const panelHidden = await page.locator("#multi-jump-panel").isHidden();
+  if (!panelHidden || /Auto marks set|Found \d+ jumps|failed/i.test(status)) break;
+  await page.waitForTimeout(1000);
+}
 
 const report = await page.evaluate(() => {
   const status = document.querySelector("#detect-status")?.textContent ?? "";
   const summary = document.querySelector("#multi-jump-summary")?.textContent ?? "";
-  const items = [...document.querySelectorAll("#multi-jump-list .multi-jump-item")].map((li) => li.textContent);
+  const items = [...document.querySelectorAll("#multi-jump-list .multi-jump-item")].map((li) =>
+    (li.textContent ?? "").replace(/\s+/g, " ").trim(),
+  );
   const marks = {
     td: document.querySelector("#td-frame")?.textContent,
     to: document.querySelector("#to-frame")?.textContent,
@@ -76,7 +87,6 @@ const report = await page.evaluate(() => {
   return { status, summary, items, marks, metrics };
 });
 
-console.log(JSON.stringify({ report, logs: logs.slice(-20) }, null, 2));
+console.log("REPORT", JSON.stringify(report, null, 2));
 await browser.close();
 server.close();
-process.exit(0);
