@@ -6,7 +6,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, box-profile retest reminder, and an optimal Box test (3–5 heights, tagged jumps, RSI/contact recommendation saved as working box; doubles as the 4-week retest). Milestone 5 Excel auto-sync is implemented: MSAL (personal accounts) + Graph append of Friday drop jumps to the Jump Test sheet, local outbox with retry, editable workbook settings; depth-jump sheet section is TBD.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, box-profile retest reminder, and an optimal Box test (3–5 heights, tagged jumps, RSI/contact recommendation saved as working box; doubles as the 4-week retest). Milestone 5 is a Master log (all jumps, sortable, edit/delete) with Excel (.xlsx) and CSV export for paste into the Jump Test workbook — no Microsoft account or cloud sync.
 
 Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
@@ -115,18 +115,14 @@ Done when all of the following work (per jump type + box height, for height, con
 - Raise-box / retest helpers are pure functions with unit tests.
 - Optimal Box test mode (drop or depth) is self-contained: 3–5 height rows (default 6/12/18/24), upload one clip per height on that screen (auto-detect + metrics inline, compact mark nudge), Submit when 3+ heights have results. Recommend highest RSI with mean contact ≤ target (shared 250 ms); within 1× CV pick the lower box; if none meet target, suggest the lowest. Chart + save working box; jumps tagged with test id. Counts toward the 4-week profile retest. Pure helpers + unit tests.
 
-### Milestone 5 — Excel auto-sync (OneDrive / Graph)
+### Milestone 5 — Master log + Excel/CSV export
 
 Done when:
 
-- No server: MSAL.js SPA auth (PKCE) against `login.microsoftonline.com/consumers`, scopes `Files.ReadWrite` + `offline_access`, client id in `src/config.ts`, redirect `https://kellybyron2222-dev.github.io/VerticalJumpAnalysis/`.
-- Connect Excel (redirect flow for iOS Safari) and Sync now from Directions; workbook path / sheet / header row are editable settings.
-- Friday drop-jump rows append to sheet `Jump Test` below the header row (default 23) in columns A–H: Date, Week (ISO), Box, Arm swing, Height (in), GCT (ms), RSI (m/s), Notes. Other columns/sections untouched.
-- localStorage outbox: queue on save, retry on load/online/Sync now, per-jump sync status, never duplicate synced ids.
-- Depth jumps: queued but left unsynced — their workbook section is TBD.
-- Unit tests cover row mapping and queue logic (Graph mocked).
-
-Optional later: CSV/XLSX download export. The app stays usable with no Microsoft account.
+- Menu screen **Master log** lists every saved jump (drop, depth, box-test) in a sortable table: Date, Week, Jump type, Box (in), Arm swing, Height (in), GCT (ms), Flight (ms), RSI, Test id, Notes; edit and delete supported.
+- **Export to Excel** downloads a real `.xlsx` (SheetJS) with a `Jump log` sheet (header row + sensible column widths). **Export CSV** also offered. Download uses the share sheet / Save to Files path on iOS Safari when available.
+- Export columns: Date, Week, Box, Arm swing, Height (in), GCT (ms), RSI (m/s), Notes (Jump Test paste order), then Jump type, Flight (ms), Test id.
+- No Microsoft login, MSAL, or Graph. Unit tests cover row mapping.
 
 ### Later — Multi-jump clips (after Excel)
 

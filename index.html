@@ -15,10 +15,10 @@
       content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Jump Lab · 2026-10-14k</title>
+    <title>Jump Lab · 2026-10-14l</title>
     <script>
       (function () {
-        var PAGE = "2026-10-14k";
+        var PAGE = "2026-10-14l";
         if ("serviceWorker" in navigator) {
           navigator.serviceWorker.getRegistrations().then(function (regs) {
             regs.forEach(function (reg) {
@@ -70,6 +70,7 @@
             <button type="button" id="nav-directions" role="menuitem">Directions</button>
             <button type="button" id="nav-box-test" role="menuitem">Optimal Box Height Analysis</button>
             <button type="button" id="nav-analyze" role="menuitem">Jump Analysis</button>
+            <button type="button" id="nav-master-log" role="menuitem">Master log</button>
           </div>
         </div>
       </header>
@@ -132,34 +133,51 @@
             </p>
           </li>
           <li>
+            <h3>Master log</h3>
+            <p>
+              Every saved jump in one table. Export to Excel or CSV — the first columns match the Jump
+              Test paste order in Byron’s workbook.
+            </p>
+          </li>
+          <li>
             <h3>Privacy</h3>
             <p>Video stays on this phone. Only numbers are saved locally.</p>
           </li>
         </ol>
 
-        <h3 class="section-label">Excel sync</h3>
-        <p class="detail">
-          Connect a personal Microsoft account to append Friday drop jumps to your OneDrive workbook.
-          Depth jumps stay queued until that sheet section is defined.
-        </p>
-        <p id="excel-account" class="detail baseline-status">Not connected.</p>
-        <button type="button" id="excel-connect" class="button-secondary">Connect Excel</button>
-        <button type="button" id="excel-sync-now" class="button-primary">Sync now</button>
-        <p id="excel-sync-status" class="detail" role="status"></p>
-        <label class="field" for="excel-workbook">
-          Workbook path
-          <input id="excel-workbook" type="text" autocomplete="off" />
-        </label>
-        <label class="field" for="excel-sheet">
-          Sheet name
-          <input id="excel-sheet" type="text" autocomplete="off" />
-        </label>
-        <label class="field" for="excel-header-row">
-          Header row (Friday drop jumps)
-          <input id="excel-header-row" type="number" inputmode="numeric" min="1" step="1" />
-        </label>
-
         <button type="button" id="dismiss-guide" class="button-primary">Go to Jump Analysis</button>
+      </section>
+
+      <section id="screen-master" class="screen" aria-labelledby="master-title" hidden>
+        <h2 id="master-title">Master log</h2>
+        <p class="lede">All saved jumps on this phone. Sort columns, edit notes or fields, export.</p>
+        <div class="master-actions">
+          <button type="button" id="master-export-xlsx" class="button-primary">Export to Excel</button>
+          <button type="button" id="master-export-csv" class="button-secondary">Export CSV</button>
+        </div>
+        <p id="master-export-status" class="detail" role="status"></p>
+        <div class="master-table-wrap">
+          <table id="master-table" class="master-table">
+            <thead>
+              <tr>
+                <th><button type="button" data-sort="date">Date</button></th>
+                <th><button type="button" data-sort="week">Week</button></th>
+                <th><button type="button" data-sort="jumpType">Jump type</button></th>
+                <th><button type="button" data-sort="box">Box (in)</button></th>
+                <th><button type="button" data-sort="arm">Arm swing</button></th>
+                <th><button type="button" data-sort="height">Height (in)</button></th>
+                <th><button type="button" data-sort="gct">GCT (ms)</button></th>
+                <th><button type="button" data-sort="flight">Flight (ms)</button></th>
+                <th><button type="button" data-sort="rsi">RSI</button></th>
+                <th><button type="button" data-sort="testId">Test id</button></th>
+                <th><button type="button" data-sort="notes">Notes</button></th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="master-body"></tbody>
+          </table>
+        </div>
+        <p id="master-empty" class="detail">No jumps saved yet.</p>
       </section>
 
       <section id="screen-box" class="screen" aria-labelledby="box-test-title" hidden>
@@ -247,7 +265,7 @@
             </div>
             <p id="timing-readout" class="cadence-status">Measuring frame times…</p>
             <p id="cadence-status" class="cadence-status" role="status"></p>
-            <p class="build-line">Build <span id="build-label">2026-10-14k</span></p>
+            <p class="build-line">Build <span id="build-label">2026-10-14l</span></p>
           </details>
 
           <div class="transport" role="group" aria-label="Frame step">

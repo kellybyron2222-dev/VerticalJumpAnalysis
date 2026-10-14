@@ -73,29 +73,22 @@ import {
   type BoxTestRowResult,
 } from "./boxTestPipeline.ts";
 import {
-  connectExcelRedirect,
-  excelAccountLabel,
-  getGraphToken,
-  handleRedirectPromise,
-  msalConfigured,
-} from "./excelAuth.ts";
-import {
-  enqueueTrial,
-  loadExcelQueue,
-  loadExcelSettings,
-  saveExcelQueue,
-  saveExcelSettings,
-  syncStatusFor,
-} from "./excelQueue.ts";
-import { syncPendingDrops } from "./excelSync.ts";
+  buildCsvText,
+  buildWorkbookBlob,
+  downloadBlob,
+  sortMasterRows,
+  trialToViewRow,
+  type MasterSortKey,
+} from "./masterLog.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
 const screenBox = must<HTMLElement>("#screen-box");
+const screenMaster = must<HTMLElement>("#screen-master");
 const menuButton = must<HTMLButtonElement>("#menu-button");
 const menuPanel = must<HTMLElement>("#menu-panel");
 const VISITED_KEY = "jumpLab.visited.v1";
-type AppScreen = "directions" | "box" | "analyze";
+type AppScreen = "directions" | "box" | "analyze" | "master";
 const videoInput = must<HTMLInputElement>("#video-input");
 const video = must<HTMLVideoElement>("#video");
 const videoStatus = must<HTMLElement>("#video-status");
@@ -131,13 +124,11 @@ const boxTestSubmit = must<HTMLButtonElement>("#box-test-submit");
 const boxTestResult = must<HTMLElement>("#box-test-result");
 const boxTestChart = must<HTMLElement>("#box-test-chart");
 const boxTestFile = must<HTMLInputElement>("#box-test-file");
-const excelConnect = must<HTMLButtonElement>("#excel-connect");
-const excelSyncNow = must<HTMLButtonElement>("#excel-sync-now");
-const excelAccount = must<HTMLElement>("#excel-account");
-const excelSyncStatus = must<HTMLElement>("#excel-sync-status");
-const excelWorkbook = must<HTMLInputElement>("#excel-workbook");
-const excelSheet = must<HTMLInputElement>("#excel-sheet");
-const excelHeaderRow = must<HTMLInputElement>("#excel-header-row");
+const masterBody = must<HTMLTableSectionElement>("#master-body");
+const masterEmpty = must<HTMLElement>("#master-empty");
+const masterExportStatus = must<HTMLElement>("#master-export-status");
+let masterSortKey: MasterSortKey = "date";
+let masterSortAsc = false;
 /** Ordered heights on the box-test screen (3–5). */
 let boxTestHeights: number[] = [...DEFAULT_BOX_TEST_HEIGHTS];
 /** Results keyed by box height. */
@@ -235,6 +226,10 @@ must<HTMLButtonElement>("#nav-box-test").addEventListener("click", () => {
 must<HTMLButtonElement>("#nav-analyze").addEventListener("click", () => {
   closeMenu();
   showScreen("analyze");
+});
+must<HTMLButtonElement>("#nav-master-log").addEventListener("click", () => {
+  closeMenu();
+  showScreen("master");
 });
 
 menuButton.addEventListener("click", () => {
@@ -377,93 +372,122 @@ boxTestFile.addEventListener("change", () => {
 boxTestSubmit.addEventListener("click", () => submitBoxTest());
 
 renderBoxTestRows();
-initExcelUi();
+initMasterLogUi();
 const firstVisit = localStorage.getItem(VISITED_KEY) !== "1";
 showScreen(firstVisit ? "directions" : "analyze");
 renderTrials();
 render();
-void bootstrapExcel();
 
-function initExcelUi(): void {
-  const settings = loadExcelSettings(localStorage);
-  excelWorkbook.value = settings.workbookPath;
-  excelSheet.value = settings.worksheet;
-  excelHeaderRow.value = String(settings.headerRow);
-  const persistSettings = () => {
-    const headerRow = Number(excelHeaderRow.value);
-    saveExcelSettings(localStorage, {
-      workbookPath: excelWorkbook.value.trim() || settings.workbookPath,
-      worksheet: excelSheet.value.trim() || settings.worksheet,
-      headerRow: Number.isFinite(headerRow) && headerRow >= 1 ? headerRow : settings.headerRow,
+function initMasterLogUi(): void {
+  for (const button of document.querySelectorAll<HTMLButtonElement>("#master-table [data-sort]")) {
+    button.addEventListener("click", () => {
+      const key = button.dataset.sort as MasterSortKey;
+      if (masterSortKey === key) masterSortAsc = !masterSortAsc;
+      else {
+        masterSortKey = key;
+        masterSortAsc = key === "date" ? false : true;
+      }
+      renderMasterLog();
     });
-  };
-  excelWorkbook.addEventListener("change", persistSettings);
-  excelSheet.addEventListener("change", persistSettings);
-  excelHeaderRow.addEventListener("change", persistSettings);
-  excelConnect.addEventListener("click", () => {
+  }
+  must<HTMLButtonElement>("#master-export-xlsx").addEventListener("click", () => {
     void (async () => {
       try {
-        if (!msalConfigured()) {
-          excelSyncStatus.textContent = "Set MS_CLIENT_ID in src/config.ts, then rebuild.";
-          return;
-        }
-        excelSyncStatus.textContent = "Redirecting to Microsoft…";
-        await connectExcelRedirect();
+        const trials = loadTrials(localStorage);
+        await downloadBlob(buildWorkbookBlob(trials), `jump-lab-${stamp()}.xlsx`);
+        masterExportStatus.textContent = "Excel file ready — use Share / Save to Files on iPhone.";
       } catch (error) {
-        excelSyncStatus.textContent = error instanceof Error ? error.message : String(error);
+        masterExportStatus.textContent = error instanceof Error ? error.message : String(error);
       }
     })();
   });
-  excelSyncNow.addEventListener("click", () => {
-    void runExcelSync();
-  });
-  window.addEventListener("online", () => {
-    void runExcelSync();
+  must<HTMLButtonElement>("#master-export-csv").addEventListener("click", () => {
+    void (async () => {
+      try {
+        const trials = loadTrials(localStorage);
+        const blob = new Blob([buildCsvText(trials)], { type: "text/csv;charset=utf-8" });
+        await downloadBlob(blob, `jump-lab-${stamp()}.csv`);
+        masterExportStatus.textContent = "CSV ready — use Share / Save to Files on iPhone.";
+      } catch (error) {
+        masterExportStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
+    })();
   });
 }
 
-async function bootstrapExcel(): Promise<void> {
-  try {
-    await handleRedirectPromise();
-  } catch {
-    // ignore redirect parse errors
-  }
-  const label = await excelAccountLabel();
-  excelAccount.textContent = label ? `Connected · ${label}` : msalConfigured() ? "Not connected." : "Client id not set.";
-  if (label) void runExcelSync();
+function stamp(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
-async function runExcelSync(): Promise<void> {
-  if (!msalConfigured()) {
-    excelSyncStatus.textContent = "Set MS_CLIENT_ID in src/config.ts first.";
-    return;
-  }
-  excelSyncStatus.textContent = "Syncing…";
-  try {
-    const token = await getGraphToken();
-    if (!token) {
-      excelSyncStatus.textContent = "Sign in with Connect Excel first.";
-      return;
+function renderMasterLog(): void {
+  const trials = loadTrials(localStorage);
+  const rows = sortMasterRows(trials.map(trialToViewRow), masterSortKey, masterSortAsc);
+  masterEmpty.hidden = rows.length > 0;
+  masterBody.replaceChildren();
+  for (const row of rows) {
+    const tr = document.createElement("tr");
+    const cells = [
+      row.date,
+      row.week === "" ? "—" : String(row.week),
+      row.jumpType,
+      String(row.box),
+      row.armSwing ? "Yes" : "No",
+      row.heightIn.toFixed(2),
+      row.gctMs.toFixed(1),
+      row.flightMs.toFixed(1),
+      row.rsi.toFixed(2),
+      row.testId || "—",
+      row.notes || "—",
+    ];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.append(td);
     }
-    const result = await syncPendingDrops({
-      token,
-      trials: loadTrials(localStorage),
-      storage: localStorage,
-      settings: loadExcelSettings(localStorage),
+    const actions = document.createElement("td");
+    actions.className = "master-actions-cell";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "text-button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => editMasterTrial(row.id));
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "text-button";
+    del.textContent = "Delete";
+    del.addEventListener("click", () => {
+      if (!confirm("Delete this jump from the phone?")) return;
+      const next = loadTrials(localStorage).filter((trial) => trial.id !== row.id);
+      saveTrials(next, localStorage);
+      renderTrials();
     });
-    excelSyncStatus.textContent =
-      result.errors.length > 0
-        ? `Sync stopped: ${result.errors[0]}`
-        : `Synced ${result.wrote} · skipped ${result.skipped}`;
-    renderTrials();
-  } catch (error) {
-    excelSyncStatus.textContent = error instanceof Error ? error.message : String(error);
+    actions.append(edit, del);
+    tr.append(actions);
+    masterBody.append(tr);
   }
 }
 
-function queueTrialForExcel(trial: TrialRecord): void {
-  const next = enqueueTrial(loadExcelQueue(localStorage), trial);
-  saveExcelQueue(localStorage, next);
+function editMasterTrial(id: string): void {
+  const trials = loadTrials(localStorage);
+  const trial = trials.find((entry) => entry.id === id);
+  if (!trial) return;
+  const jumpTypeRaw = prompt("Jump type (drop or depth)", trial.jumpType);
+  if (jumpTypeRaw !== "drop" && jumpTypeRaw !== "depth") return;
+  const jumpType: JumpType = jumpTypeRaw;
+  const boxText = prompt("Box height (in)", String(trial.boxHeightIn));
+  const boxHeightIn = Number(boxText);
+  if (!(boxHeightIn > 0)) return;
+  const armText = prompt("Arm swing (yes/no)", trial.armSwing ? "yes" : "no");
+  if (armText !== "yes" && armText !== "no") return;
+  const notes = prompt("Notes", trial.notes);
+  if (notes === null) return;
+  const next = trials.map((entry) =>
+    entry.id === id
+      ? { ...entry, jumpType, boxHeightIn, armSwing: armText === "yes", notes: notes.trim() }
+      : entry,
+  );
+  saveTrials(next, localStorage);
+  renderTrials();
 }
 
 function renderBoxTestRows(): void {
@@ -651,7 +675,6 @@ function submitBoxTest(): void {
     boxTestStatus.textContent = "Could not save on this phone.";
     return;
   }
-  for (const trial of created) queueTrialForExcel(trial);
   const summaries = summariesFromRowResults(rows);
   const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
   if (!rec) {
@@ -675,6 +698,8 @@ function showScreen(screen: AppScreen): void {
   guide.hidden = screen !== "directions";
   screenBox.hidden = screen !== "box";
   analyze.hidden = screen !== "analyze";
+  screenMaster.hidden = screen !== "master";
+  if (screen === "master") renderMasterLog();
   if (screen !== "directions") {
     try {
       localStorage.setItem(VISITED_KEY, "1");
@@ -1138,8 +1163,6 @@ function onSave(): void {
   notesInput.value = "";
   formError.hidden = true;
   saveStatus.textContent = "Jump saved on this phone.";
-  queueTrialForExcel(trial);
-  void runExcelSync();
   render();
   renderTrials();
   must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });
@@ -1167,6 +1190,7 @@ function renderTrials(): void {
   savedEmpty.hidden = trials.length > 0;
   jumpList.replaceChildren();
   for (const trial of trials) jumpList.append(renderTrial(trial));
+  if (!screenMaster.hidden) renderMasterLog();
 }
 
 function renderSession(trials: TrialRecord[]): void {
@@ -1330,21 +1354,6 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
     notes.textContent = trial.notes;
     item.append(notes);
   }
-
-  const sync = document.createElement("p");
-  sync.className = "notes excel-sync-flag";
-  const queue = loadExcelQueue(localStorage);
-  const status = syncStatusFor(queue, trial.id);
-  const itemNote = queue.items.find((entry) => entry.trialId === trial.id)?.note;
-  sync.textContent =
-    status === "synced"
-      ? "Excel · synced"
-      : status === "pending"
-        ? "Excel · pending"
-        : status === "blocked"
-          ? `Excel · ${itemNote ?? "blocked"}`
-          : "Excel · not queued";
-  item.append(sync);
 
   const button = document.createElement("button");
   button.type = "button";
