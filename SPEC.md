@@ -6,7 +6,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a simple box-height chart (height, contact time, RSI by week). Milestones 4–5 are specified below and are not built.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, and manual re-baseline in the session view. Milestone 5 is specified below and is not built.
 
 Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
@@ -99,19 +99,19 @@ Behavior:
 
 ### Milestone 4 — Baseline and flags
 
-Per jump type and box height:
+Done when all of the following work (per jump type + box height, for height, contact time, and RSI):
 
-- Compare the current week's mean with the average of prior weeks only. Exclude the current week from that average.
-- Provisional baseline once there are 3 or more prior weeks: show the comparison, and do not flag.
-- Established baseline once there are 6 or more prior weeks, using a rolling 6-week average of those prior weeks.
-- Allow a manual re-baseline.
-- Noise is the athlete's own coefficient of variation of weekly means, once 3 or more weeks exist. Until then, default CV is 8.5%.
-- Change rules, relative to that CV:
-  - Under 1× CV: normal.
-  - 1–2× CV: watch.
-  - Over 2× CV, or over 1× CV for 2 consecutive weeks: a real change.
-- Raise-box indicator: RSI stays above 1× CV for 2 weeks, and GCT is at the user's target (default 250 ms).
-- Suggest retesting the full box profile about every 4 weeks.
+- Weekly mean = mean of that week’s jumps; keep the best as a PR.
+- Compare the current week’s mean with the average of prior weekly means only (exclude the current week).
+- Provisional baseline at 3+ prior weeks: show the comparison, do not flag.
+- Established baseline at 6+ prior weeks: rolling average of the last 6 prior weeks; flags apply.
+- Manual “re-baseline from this week” cuts older weeks out of the baseline pool.
+- Noise = athlete CV of weekly means once 3+ weeks exist; default CV 8.5% until then.
+- Flags (established only): |delta| < 1× CV normal; 1–2× CV watch; > 2× CV, or > 1× CV in the same direction for 2 consecutive weeks, real change. Contact time: lower is better; streak uses signed direction.
+- Session view shows this week vs baseline, % change, flag, and provisional/established status.
+- Pure baseline helpers live in their own module with unit tests.
+
+Later (not required for this milestone’s done bar): raise-box indicator (RSI > 1× CV for 2 weeks and GCT at target, default 250 ms); suggest full box-profile retest about every 4 weeks.
 
 ### Milestone 5 — Excel, then optional OneDrive
 

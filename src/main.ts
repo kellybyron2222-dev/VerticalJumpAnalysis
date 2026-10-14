@@ -39,9 +39,18 @@ import {
   type JumpType,
   type TrialRecord,
 } from "./storage.ts";
-import { metricByDate, sessionsForDay, type SessionMetric } from "./sessions.ts";
+import { metricByDate, sessionsForDay, trialDay, weekKey, type SessionMetric } from "./sessions.ts";
 import { metricLabel, renderBoxChart } from "./chart.ts";
 import { BUILD_ID, ensureLatestBuild } from "./version.ts";
+import {
+  evaluateCell,
+  formatFlag,
+  formatStatus,
+  loadRebaselineWeeks,
+  setRebaselineWeek,
+  type FlagMetric,
+  type MetricBaseline,
+} from "./baseline.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -763,6 +772,8 @@ function renderSession(trials: TrialRecord[]): void {
   sessionEmpty.hidden = groups.length > 0;
   sessionEmpty.textContent = "No jumps saved today yet.";
   sessionList.replaceChildren();
+  const rebaseline = loadRebaselineWeeks(localStorage);
+  const thisWeek = weekKey(trialDay(new Date().toISOString()));
   for (const group of groups) {
     const item = document.createElement("li");
     item.className = "session-group";
@@ -777,8 +788,58 @@ function renderSession(trials: TrialRecord[]): void {
     best.className = "detail";
     best.textContent = `Best · height ${formatHeightIn(group.best.heightIn)} · contact ${formatMilliseconds(group.best.gctMs)} · flight ${formatMilliseconds(group.best.flightMs)} · RSI ${formatRsi(group.best.rsi)}`;
     item.append(title, mean, best);
+
+    const cut = rebaseline[`${group.jumpType}|${group.boxHeightIn}`] ?? null;
+    const cell = evaluateCell(trials, group.jumpType, group.boxHeightIn, thisWeek, cut);
+    const statusLine = document.createElement("p");
+    statusLine.className = "detail baseline-status";
+    statusLine.textContent = `Baseline · ${formatStatus(cell.metrics.heightIn.status)} · CV ${(cell.metrics.heightIn.cv * 100).toFixed(1)}%`;
+    item.append(statusLine);
+    for (const metric of ["heightIn", "gctMs", "rsi"] as FlagMetric[]) {
+      item.append(renderBaselineMetric(cell.metrics[metric]));
+    }
+    const rebase = document.createElement("button");
+    rebase.type = "button";
+    rebase.className = "text-button rebaseline";
+    rebase.textContent = "Re-baseline from this week";
+    rebase.addEventListener("click", () => {
+      setRebaselineWeek(localStorage, group.jumpType, group.boxHeightIn, thisWeek);
+      renderTrials();
+    });
+    item.append(rebase);
     sessionList.append(item);
   }
+}
+
+function renderBaselineMetric(metric: MetricBaseline): HTMLParagraphElement {
+  const line = document.createElement("p");
+  line.className = "detail baseline-metric";
+  const label =
+    metric.metric === "heightIn" ? "Height" : metric.metric === "gctMs" ? "Contact" : "RSI";
+  if (metric.status === "none" || metric.baseline === null || metric.currentWeek === null) {
+    line.textContent = `${label} · need 3 prior weeks for baseline`;
+    return line;
+  }
+  const weekVal =
+    metric.metric === "heightIn"
+      ? formatHeightIn(metric.currentWeek.mean)
+      : metric.metric === "gctMs"
+        ? formatMilliseconds(metric.currentWeek.mean)
+        : formatRsi(metric.currentWeek.mean);
+  const baseVal =
+    metric.metric === "heightIn"
+      ? formatHeightIn(metric.baseline)
+      : metric.metric === "gctMs"
+        ? formatMilliseconds(metric.baseline)
+        : formatRsi(metric.baseline);
+  const pct =
+    metric.percentChange === null
+      ? "—"
+      : `${metric.percentChange >= 0 ? "+" : ""}${metric.percentChange.toFixed(1)}%`;
+  const flag =
+    metric.status === "established" ? formatFlag(metric.flag) : "no flag (provisional)";
+  line.textContent = `${label} · week ${weekVal} vs base ${baseVal} · ${pct} · ${flag}`;
+  return line;
 }
 
 function renderHistory(): void {

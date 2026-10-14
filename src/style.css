@@ -646,6 +646,20 @@ legend {
   font-weight: 600;
 }
 
+.baseline-status,
+.baseline-metric {
+  font-size: 0.88rem;
+}
+
+.rebaseline {
+  margin-top: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-weight: 600;
+}
+
 .box-chart {
   display: block;
   width: 100%;
