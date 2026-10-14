@@ -6,7 +6,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, box-profile retest reminder, and an optimal Box test (3–5 heights, tagged jumps, RSI/contact recommendation saved as working box; doubles as the 4-week retest). Milestone 5 is a Master log (all jumps, sortable, edit/delete) with Excel (.xlsx) and CSV export for paste into the Jump Test workbook — no Microsoft account or cloud sync.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, box-profile retest reminder, and an optimal Box test (3–5 heights, tagged jumps, RSI/contact recommendation saved as working box; doubles as the 4-week retest). Milestone 5 is a Master log (all jumps, sortable, edit/delete) with Excel (.xlsx) and CSV export for paste into the Jump Test workbook, plus optional GitHub Contents sync of the same log onto a `data` branch (fine-grained token in localStorage only — no Microsoft/MSAL).
 
 Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
@@ -115,7 +115,7 @@ Done when all of the following work (per jump type + box height, for height, con
 - Raise-box / retest helpers are pure functions with unit tests.
 - Optimal Box test mode (drop or depth) is self-contained: 3–5 height rows (default 6/12/18/24), upload one clip per height on that screen (auto-detect + metrics inline, compact mark nudge), Submit when 3+ heights have results. Recommend highest RSI with mean contact ≤ target (shared 250 ms); within 1× CV pick the lower box; if none meet target, suggest the lowest. Chart + save working box; jumps tagged with test id. Counts toward the 4-week profile retest. Pure helpers + unit tests.
 
-### Milestone 5 — Master log + Excel/CSV export
+### Milestone 5 — Master log + Excel/CSV export + GitHub log sync
 
 Done when:
 
@@ -123,6 +123,7 @@ Done when:
 - **Export to Excel** downloads a real `.xlsx` (SheetJS) with a `Jump log` sheet (header row + sensible column widths). **Export CSV** also offered. Download uses the share sheet / Save to Files path on iOS Safari when available.
 - Export columns: Date, Week, Box, Arm swing, Height (in), GCT (ms), RSI (m/s), Notes (Jump Test paste order), then Jump type, Flight (ms), Test id.
 - No Microsoft login, MSAL, or Graph. Unit tests cover row mapping.
+- **GitHub log sync (optional):** fine-grained PAT (Contents read/write on this repo only) stored in localStorage only — never committed or logged. Directions explain how to create the token. On each save/edit/delete the full log is pushed via GitHub REST Contents API (`PUT …/contents/data/jump-log.csv` and `data/jump-log.json`) on a separate branch named `data` (created from `main` if missing) so log commits do not trigger Pages deploys on `main`. Sha handling with retry; dirty outbox when offline; **Sync now** button and last-synced status; first connect merges remote rows by id so a cleared phone can restore its log. Unit tests cover CSV header mapping, merge, and mocked PUT/branch/retry.
 
 ### Later — Multi-jump clips (after Excel)
 
