@@ -59,16 +59,19 @@ import {
   saveGctTargetMs,
 } from "./raiseBox.ts";
 import {
-  loadActiveBoxTest,
-  loadWorkingBox,
+  BOX_TEST_HEIGHT_CHOICES,
+  DEFAULT_BOX_TEST_HEIGHTS,
+  createBoxTestId,
   recommendBoxHeight,
   renderBoxTestChart,
-  saveActiveBoxTest,
   saveWorkingBox,
-  startBoxTest,
-  summarizeBoxTest,
-  type ActiveBoxTest,
 } from "./boxTest.ts";
+import {
+  processBoxTestClip,
+  recomputeRowMetrics,
+  summariesFromRowResults,
+  type BoxTestRowResult,
+} from "./boxTestPipeline.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -105,11 +108,20 @@ const gctTargetInput = must<HTMLInputElement>("#gct-target");
 const profileRetest = must<HTMLElement>("#profile-retest");
 const boxTestType = must<HTMLSelectElement>("#box-test-type");
 const boxTestStatus = must<HTMLElement>("#box-test-status");
-const boxTestStart = must<HTMLButtonElement>("#box-test-start");
-const boxTestFinish = must<HTMLButtonElement>("#box-test-finish");
+const boxTestRows = must<HTMLUListElement>("#box-test-rows");
+const boxTestAddHeight = must<HTMLSelectElement>("#box-test-add-height");
+const boxTestAdd = must<HTMLButtonElement>("#box-test-add");
+const boxTestSubmit = must<HTMLButtonElement>("#box-test-submit");
 const boxTestResult = must<HTMLElement>("#box-test-result");
 const boxTestChart = must<HTMLElement>("#box-test-chart");
-let activeBoxTest: ActiveBoxTest | null = loadActiveBoxTest(localStorage);
+const boxTestFile = must<HTMLInputElement>("#box-test-file");
+/** Ordered heights on the box-test screen (3–5). */
+let boxTestHeights: number[] = [...DEFAULT_BOX_TEST_HEIGHTS];
+/** Results keyed by box height. */
+const boxTestResults = new Map<number, BoxTestRowResult>();
+let boxTestUploadTarget: number | null = null;
+let boxTestBusy: AbortController | null = null;
+let boxTestSessionId = createBoxTestId();
 const chartRoot = must<HTMLElement>("#chart-root");
 const chartLegend = must<HTMLElement>("#chart-legend");
 const chartMetric = must<HTMLSelectElement>("#chart-metric");
@@ -317,73 +329,238 @@ gctTargetInput.addEventListener("change", () => {
   saveGctTargetMs(localStorage, value);
   renderTrials();
 });
-boxTestStart.addEventListener("click", () => {
-  const heights = [...document.querySelectorAll<HTMLInputElement>("#box-test-height-chips input:checked")].map(
-    (input) => Number(input.value),
-  );
-  const jumpType = boxTestType.value as JumpType;
-  const test = startBoxTest(jumpType, heights);
-  if (!test) {
-    boxTestStatus.textContent = "Pick 3 to 5 box heights.";
+boxTestAdd.addEventListener("click", () => {
+  const height = Number(boxTestAddHeight.value);
+  if (!BOX_TEST_HEIGHT_CHOICES.includes(height as (typeof BOX_TEST_HEIGHT_CHOICES)[number])) return;
+  if (boxTestHeights.includes(height)) {
+    boxTestStatus.textContent = `${height} in is already on the list.`;
     return;
   }
-  activeBoxTest = test;
-  saveActiveBoxTest(localStorage, test);
-  const typeInput = document.querySelector<HTMLInputElement>(`input[name="jumpType"][value="${jumpType}"]`);
-  if (typeInput) typeInput.checked = true;
-  boxInput.value = String(test.heights[0]);
-  boxAutoFilled = false;
-  syncChips();
-  renderBoxTestUi();
-  render();
+  if (boxTestHeights.length >= 5) {
+    boxTestStatus.textContent = "At most 5 heights.";
+    return;
+  }
+  boxTestHeights = [...boxTestHeights, height].sort((a, b) => a - b);
+  renderBoxTestRows();
 });
-boxTestFinish.addEventListener("click", () => {
-  if (!activeBoxTest) return;
-  const trials = loadTrials(localStorage);
-  const summaries = summarizeBoxTest(trials, activeBoxTest.id, activeBoxTest.heights);
+boxTestFile.addEventListener("change", () => {
+  const file = boxTestFile.files?.[0];
+  const height = boxTestUploadTarget;
+  boxTestFile.value = "";
+  boxTestUploadTarget = null;
+  if (!file || height === null) return;
+  void runBoxTestUpload(height, file);
+});
+boxTestSubmit.addEventListener("click", () => submitBoxTest());
+
+renderBoxTestRows();
+const firstVisit = localStorage.getItem(VISITED_KEY) !== "1";
+showScreen(firstVisit ? "directions" : "analyze");
+renderTrials();
+render();
+
+function renderBoxTestRows(): void {
+  boxTestRows.replaceChildren();
+  const done = [...boxTestResults.keys()].filter((h) => boxTestHeights.includes(h)).length;
+  boxTestStatus.textContent = `${done}/${boxTestHeights.length} heights have a clip · need 3+ to submit`;
+  boxTestSubmit.disabled = done < 3 || boxTestBusy !== null;
+
+  for (const height of boxTestHeights) {
+    const result = boxTestResults.get(height) ?? null;
+    const item = document.createElement("li");
+    item.className = "box-test-row";
+
+    const head = document.createElement("div");
+    head.className = "box-test-row-head";
+    const title = document.createElement("p");
+    title.className = "box-test-row-title";
+    title.textContent = `${height} in`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "text-button";
+    remove.textContent = "Remove";
+    remove.disabled = boxTestHeights.length <= 3;
+    remove.addEventListener("click", () => {
+      if (boxTestHeights.length <= 3) return;
+      boxTestHeights = boxTestHeights.filter((h) => h !== height);
+      boxTestResults.delete(height);
+      renderBoxTestRows();
+    });
+    head.append(title, remove);
+
+    const status = document.createElement("p");
+    status.className = "detail";
+    status.dataset.role = "status";
+    status.textContent = result ? result.fileName : "No clip yet";
+
+    const metrics = document.createElement("div");
+    metrics.className = "box-test-row-metrics";
+    if (result) {
+      metrics.innerHTML = "";
+      for (const [label, value] of [
+        ["Contact", `${result.gctMs.toFixed(0)} ms`],
+        ["Height", `${result.heightIn.toFixed(2)} in`],
+        ["RSI", result.rsi.toFixed(2)],
+      ] as const) {
+        const cell = document.createElement("div");
+        const dt = document.createElement("span");
+        dt.className = "jump-metric-label";
+        dt.textContent = label;
+        const dd = document.createElement("span");
+        dd.className = "jump-metric-value";
+        dd.textContent = value;
+        cell.append(dt, dd);
+        metrics.append(cell);
+      }
+    } else {
+      metrics.textContent = "Upload a clip to measure this height.";
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "box-test-row-actions";
+    const upload = document.createElement("button");
+    upload.type = "button";
+    upload.className = "button-secondary";
+    upload.textContent = result ? "Replace video" : "Upload video";
+    upload.disabled = boxTestBusy !== null;
+    upload.addEventListener("click", () => {
+      boxTestUploadTarget = height;
+      boxTestFile.click();
+    });
+    actions.append(upload);
+
+    item.append(head, status, metrics, actions);
+
+    if (result) {
+      const nudge = document.createElement("details");
+      nudge.className = "box-test-nudge";
+      const summary = document.createElement("summary");
+      summary.textContent = "Nudge marks";
+      nudge.append(summary);
+      for (const key of ["touchdown", "takeoff", "landing"] as const) {
+        const row = document.createElement("div");
+        row.className = "box-test-nudge-row";
+        const label = document.createElement("span");
+        label.textContent = `${key} ${result[key]}`;
+        const minus = document.createElement("button");
+        minus.type = "button";
+        minus.textContent = "−1";
+        const plus = document.createElement("button");
+        plus.type = "button";
+        plus.textContent = "+1";
+        const apply = (delta: number) => {
+          const next = {
+            touchdown: result.touchdown,
+            takeoff: result.takeoff,
+            landing: result.landing,
+          };
+          next[key] += delta;
+          const updated = recomputeRowMetrics(result, next.touchdown, next.takeoff, next.landing);
+          if (!updated) {
+            status.textContent = "Marks must stay touchdown < takeoff < landing.";
+            return;
+          }
+          boxTestResults.set(height, updated);
+          renderBoxTestRows();
+        };
+        minus.addEventListener("click", () => apply(-1));
+        plus.addEventListener("click", () => apply(1));
+        row.append(label, minus, plus);
+        nudge.append(row);
+      }
+      item.append(nudge);
+    }
+
+    boxTestRows.append(item);
+  }
+}
+
+async function runBoxTestUpload(height: number, file: File): Promise<void> {
+  boxTestBusy?.abort();
+  const controller = new AbortController();
+  boxTestBusy = controller;
+  renderBoxTestRows();
+  const statusNodes = boxTestRows.querySelectorAll("[data-role='status']");
+  // Find the row status by re-render message via boxTestStatus for progress.
+  boxTestStatus.textContent = `Reading ${height} in…`;
+  try {
+    const result = await processBoxTestClip(
+      file,
+      height,
+      (message) => {
+        boxTestStatus.textContent = `${height} in · ${message}`;
+      },
+      controller.signal,
+    );
+    if (controller.signal.aborted) return;
+    boxTestResults.set(height, result);
+    boxTestStatus.textContent = `${height} in ready.`;
+  } catch (error) {
+    if (controller.signal.aborted) boxTestStatus.textContent = "Upload cancelled.";
+    else {
+      boxTestStatus.textContent = `${height} in failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  } finally {
+    if (boxTestBusy === controller) boxTestBusy = null;
+    renderBoxTestRows();
+    void statusNodes;
+  }
+}
+
+function submitBoxTest(): void {
+  const rows = boxTestHeights
+    .map((h) => boxTestResults.get(h))
+    .filter((row): row is BoxTestRowResult => Boolean(row));
+  if (rows.length < 3) {
+    boxTestStatus.textContent = "Need results for at least 3 heights.";
+    return;
+  }
+  const jumpType = boxTestType.value as JumpType;
+  const testId = boxTestSessionId;
+  const created = [];
+  for (const row of rows) {
+    const trial = createTrial({
+      fps: row.fps,
+      jumpType,
+      boxHeightIn: row.boxHeightIn,
+      armSwing: false,
+      notes: `Box test ${testId}`,
+      touchdownFrame: row.touchdown,
+      takeoffFrame: row.takeoff,
+      landingFrame: row.landing,
+      slowMoFactor: row.slowMoFactor,
+      stepOffFrame: row.stepOff,
+      boxTestId: testId,
+      frameTimes: row.frameTimes.length ? row.frameTimes : undefined,
+    });
+    if (trial) created.push(trial);
+  }
+  if (created.length < 3) {
+    boxTestStatus.textContent = "Could not save enough jumps from this test.";
+    return;
+  }
+  const existing = loadTrials(localStorage);
+  if (!saveTrials([...created, ...existing], localStorage)) {
+    boxTestStatus.textContent = "Could not save on this phone.";
+    return;
+  }
+  const summaries = summariesFromRowResults(rows);
   const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
   if (!rec) {
     boxTestResult.hidden = false;
-    boxTestResult.textContent = "Save at least one jump in this test first.";
+    boxTestResult.textContent = "Not enough data to recommend.";
     return;
   }
-  saveWorkingBox(localStorage, activeBoxTest.jumpType, rec.recommendedBoxIn);
+  saveWorkingBox(localStorage, jumpType, rec.recommendedBoxIn);
   boxInput.value = String(rec.recommendedBoxIn);
   boxAutoFilled = false;
   syncChips();
   boxTestResult.hidden = false;
   boxTestResult.textContent = rec.message;
   boxTestChart.replaceChildren(renderBoxTestChart(rec.summaries));
-  activeBoxTest = null;
-  saveActiveBoxTest(localStorage, null);
-  renderBoxTestUi();
+  boxTestSessionId = createBoxTestId();
+  boxTestStatus.textContent = "Test saved. Working box updated.";
   renderTrials();
-  render();
-});
-boxTestType.addEventListener("change", () => {
-  const working = loadWorkingBox(localStorage, boxTestType.value as JumpType);
-  if (working && !activeBoxTest) boxInput.value = String(working);
-});
-
-renderBoxTestUi();
-const firstVisit = localStorage.getItem(VISITED_KEY) !== "1";
-showScreen(firstVisit ? "directions" : "analyze");
-renderTrials();
-render();
-
-function renderBoxTestUi(): void {
-  if (activeBoxTest) {
-    boxTestStatus.textContent = `Active ${activeBoxTest.jumpType} test · heights ${activeBoxTest.heights.join(", ")} in · saves are tagged`;
-    boxTestStart.hidden = true;
-    boxTestFinish.hidden = false;
-    boxTestType.value = activeBoxTest.jumpType;
-    boxTestType.disabled = true;
-  } else {
-    boxTestStatus.textContent = "Not in a box test.";
-    boxTestStart.hidden = false;
-    boxTestFinish.hidden = true;
-    boxTestType.disabled = false;
-  }
 }
 
 function showScreen(screen: AppScreen): void {
@@ -819,12 +996,6 @@ function onSave(): void {
   }
   if (marks.touchdown === null || marks.takeoff === null || marks.landing === null) return;
 
-  if (activeBoxTest && jumpType !== activeBoxTest.jumpType) {
-    formError.hidden = false;
-    formError.textContent = `Box test is ${activeBoxTest.jumpType} — switch jump type or finish the test.`;
-    return;
-  }
-
   const trial = createTrial({
     fps,
     jumpType: jumpType as JumpType,
@@ -836,7 +1007,6 @@ function onSave(): void {
     landingFrame: marks.landing,
     slowMoFactor: activeStretch(),
     stepOffFrame: marks.stepOff,
-    boxTestId: activeBoxTest?.id,
     frameTimes: frameTimes ?? undefined,
   });
   if (!trial) {
@@ -859,13 +1029,7 @@ function onSave(): void {
   marks.landing = null;
   notesInput.value = "";
   formError.hidden = true;
-  saveStatus.textContent = activeBoxTest
-    ? `Jump saved · box test ${activeBoxTest.heights.join("/")} in`
-    : "Jump saved on this phone.";
-  if (activeBoxTest) {
-    const summaries = summarizeBoxTest([trial, ...trials], activeBoxTest.id, activeBoxTest.heights);
-    boxTestChart.replaceChildren(renderBoxTestChart(summaries));
-  }
+  saveStatus.textContent = "Jump saved on this phone.";
   render();
   renderTrials();
   must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });

@@ -853,27 +853,72 @@ legend {
   font-variant-numeric: tabular-nums;
 }
 
-.box-test-hint {
-  margin-top: 1rem;
+.box-test-add {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem;
+  align-items: end;
 }
 
-#screen-box .chips {
+.box-test-rows {
+  list-style: none;
+  margin: 0.85rem 0;
+  padding: 0;
+}
+
+.box-test-row {
+  margin-bottom: 0.75rem;
+  padding: 0.85rem 0.9rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.box-test-row-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
-#box-test-height-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 0.75rem;
-}
-
-#box-test-height-chips label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
+.box-test-row-title {
   font-weight: 600;
+  font-size: 1.15rem;
+}
+
+.box-test-row-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.box-test-row-actions {
+  margin-top: 0.65rem;
+}
+
+.box-test-nudge {
+  margin-top: 0.55rem;
+}
+
+.box-test-nudge-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.box-test-nudge-row button {
+  min-height: 36px;
+  padding: 0.25rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+}
+
+#box-test-submit {
+  margin-top: 0.35rem;
 }
 
 .jump .delete {

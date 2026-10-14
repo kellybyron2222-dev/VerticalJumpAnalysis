@@ -15,10 +15,10 @@
       content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Jump Lab · 2026-10-14i</title>
+    <title>Jump Lab · 2026-10-14j</title>
     <script>
       (function () {
-        var PAGE = "2026-10-14i";
+        var PAGE = "2026-10-14j";
         if ("serviceWorker" in navigator) {
           navigator.serviceWorker.getRegistrations().then(function (regs) {
             regs.forEach(function (reg) {
@@ -126,8 +126,9 @@
           <li>
             <h3>Optimal Box Height Analysis</h3>
             <p>
-              Run a box test across 3–5 heights (3 jumps each). The app recommends a working box from
-              RSI and contact time. Use this for the 4-week profile retest.
+              Stay on that screen. Add 3–5 box heights, upload one clip per height, check contact /
+              jump height / RSI in each row (nudge marks if needed), then Submit test for the
+              recommended working box. That run is the 4-week profile retest.
             </p>
           </li>
           <li>
@@ -141,7 +142,8 @@
       <section id="screen-box" class="screen" aria-labelledby="box-test-title" hidden>
         <h2 id="box-test-title">Optimal Box Height Analysis</h2>
         <p class="lede">
-          3 jumps per height · about 1 min rest between jumps · 2–3 min between heights.
+          One clip per box height (one jump each). Upload here — you never leave this screen. Rest
+          about 1 min between jumps and 2–3 min between heights.
         </p>
         <label class="field" for="box-test-type">
           Jump type
@@ -150,27 +152,27 @@
             <option value="depth">Depth jump</option>
           </select>
         </label>
-        <fieldset id="box-test-heights">
-          <legend>Box heights (pick 3–5)</legend>
-          <div class="chips" id="box-test-height-chips">
-            <label><input type="checkbox" value="6" checked /> 6</label>
-            <label><input type="checkbox" value="12" checked /> 12</label>
-            <label><input type="checkbox" value="18" checked /> 18</label>
-            <label><input type="checkbox" value="24" checked /> 24</label>
-            <label><input type="checkbox" value="30" /> 30</label>
-          </div>
-        </fieldset>
+        <div class="box-test-add">
+          <label class="field" for="box-test-add-height">
+            Add height (in)
+            <select id="box-test-add-height">
+              <option value="6">6</option>
+              <option value="12">12</option>
+              <option value="18">18</option>
+              <option value="24">24</option>
+              <option value="30">30</option>
+            </select>
+          </label>
+          <button type="button" id="box-test-add" class="button-secondary">Add height</button>
+        </div>
         <p id="box-test-status" class="detail baseline-status"></p>
-        <button type="button" id="box-test-start" class="button-secondary">Start box test</button>
-        <button type="button" id="box-test-finish" class="button-primary" hidden>
-          Finish &amp; recommend
+        <ul id="box-test-rows" class="box-test-rows"></ul>
+        <button type="button" id="box-test-submit" class="button-primary" disabled>
+          Submit test
         </button>
         <p id="box-test-result" class="detail" hidden></p>
         <div id="box-test-chart"></div>
-        <p class="detail box-test-hint">
-          While a test is active, save jumps in Jump Analysis — they are tagged to this test. Then
-          finish here for the recommendation.
-        </p>
+        <input id="box-test-file" class="visually-hidden" type="file" accept="video/*" />
       </section>
 
       <section id="analyze" class="screen" hidden>
@@ -222,7 +224,7 @@
             </div>
             <p id="timing-readout" class="cadence-status">Measuring frame times…</p>
             <p id="cadence-status" class="cadence-status" role="status"></p>
-            <p class="build-line">Build <span id="build-label">2026-10-14i</span></p>
+            <p class="build-line">Build <span id="build-label">2026-10-14j</span></p>
           </details>
 
           <div class="transport" role="group" aria-label="Frame step">
