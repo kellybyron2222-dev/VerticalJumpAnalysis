@@ -928,6 +928,16 @@ legend {
   margin: 0.75rem 0;
 }
 
+.master-sync {
+  margin: 1rem 0 1.25rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.master-sync .field {
+  margin-top: 0.5rem;
+}
+
 .master-table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

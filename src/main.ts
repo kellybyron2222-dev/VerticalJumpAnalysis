@@ -80,6 +80,13 @@ import {
   trialToViewRow,
   type MasterSortKey,
 } from "./masterLog.ts";
+import {
+  loadGithubToken,
+  loadSyncMeta,
+  markDirty,
+  saveGithubToken,
+  syncGithubLog,
+} from "./githubSync.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -127,8 +134,11 @@ const boxTestFile = must<HTMLInputElement>("#box-test-file");
 const masterBody = must<HTMLTableSectionElement>("#master-body");
 const masterEmpty = must<HTMLElement>("#master-empty");
 const masterExportStatus = must<HTMLElement>("#master-export-status");
+const githubTokenInput = must<HTMLInputElement>("#github-token");
+const githubSyncStatus = must<HTMLElement>("#github-sync-status");
 let masterSortKey: MasterSortKey = "date";
 let masterSortAsc = false;
+let githubSyncBusy = false;
 /** Ordered heights on the box-test screen (3–5). */
 let boxTestHeights: number[] = [...DEFAULT_BOX_TEST_HEIGHTS];
 /** Results keyed by box height. */
@@ -413,6 +423,81 @@ function initMasterLogUi(): void {
       }
     })();
   });
+  githubTokenInput.value = loadGithubToken(localStorage);
+  must<HTMLButtonElement>("#github-token-save").addEventListener("click", () => {
+    if (!saveGithubToken(localStorage, githubTokenInput.value)) {
+      githubSyncStatus.textContent = "Could not save token on this phone.";
+      return;
+    }
+    githubTokenInput.value = loadGithubToken(localStorage);
+    githubSyncStatus.textContent = githubTokenInput.value
+      ? "Token saved on this phone only."
+      : "Token cleared.";
+    renderGithubSyncStatus();
+  });
+  must<HTMLButtonElement>("#github-sync-now").addEventListener("click", () => {
+    void runGithubSync({ force: true });
+  });
+  renderGithubSyncStatus();
+}
+
+function renderGithubSyncStatus(): void {
+  const meta = loadSyncMeta(localStorage);
+  const hasToken = Boolean(loadGithubToken(localStorage));
+  const parts: string[] = [];
+  if (!hasToken) parts.push("No token — add one to sync.");
+  else if (meta.lastSyncedAt) {
+    const when = new Date(meta.lastSyncedAt);
+    parts.push(
+      Number.isNaN(when.getTime())
+        ? `Last synced ${meta.lastSyncedAt}`
+        : `Last synced ${when.toLocaleString()}`,
+    );
+  } else parts.push("Never synced.");
+  if (meta.dirty) parts.push("Pending changes (outbox).");
+  if (meta.lastError) parts.push(`Last error: ${meta.lastError}`);
+  githubSyncStatus.textContent = parts.join(" ");
+}
+
+/** Mark outbox dirty and try a background push when a token exists. */
+function queueGithubSync(): void {
+  markDirty(localStorage);
+  renderGithubSyncStatus();
+  void runGithubSync({ force: false });
+}
+
+async function runGithubSync(options: { force: boolean }): Promise<void> {
+  if (githubSyncBusy) return;
+  const token = loadGithubToken(localStorage);
+  if (!token) {
+    if (options.force) githubSyncStatus.textContent = "Add a GitHub token first.";
+    return;
+  }
+  const meta = loadSyncMeta(localStorage);
+  if (!options.force && !meta.dirty) return;
+
+  githubSyncBusy = true;
+  githubSyncStatus.textContent = "Syncing to GitHub…";
+  try {
+    const localTrials = loadTrials(localStorage);
+    const result = await syncGithubLog({
+      token,
+      localTrials,
+      storage: localStorage,
+    });
+    if (result.error) {
+      renderGithubSyncStatus();
+      githubSyncStatus.textContent = `${githubSyncStatus.textContent} Error: ${result.error}`;
+      return;
+    }
+    saveTrials(result.merged, localStorage);
+    renderTrials();
+    const pulledNote = result.pulled > 0 ? ` Restored ${result.pulled} from repo.` : "";
+    renderGithubSyncStatus();
+    githubSyncStatus.textContent = `Synced ${result.merged.length} jumps.${pulledNote} ${githubSyncStatus.textContent}`;
+  } finally {
+    githubSyncBusy = false;
+  }
 }
 
 function stamp(): string {
@@ -459,6 +544,7 @@ function renderMasterLog(): void {
       if (!confirm("Delete this jump from the phone?")) return;
       const next = loadTrials(localStorage).filter((trial) => trial.id !== row.id);
       saveTrials(next, localStorage);
+      queueGithubSync();
       renderTrials();
     });
     actions.append(edit, del);
@@ -487,6 +573,7 @@ function editMasterTrial(id: string): void {
       : entry,
   );
   saveTrials(next, localStorage);
+  queueGithubSync();
   renderTrials();
 }
 
@@ -675,6 +762,7 @@ function submitBoxTest(): void {
     boxTestStatus.textContent = "Could not save on this phone.";
     return;
   }
+  queueGithubSync();
   const summaries = summariesFromRowResults(rows);
   const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
   if (!rec) {
@@ -1155,6 +1243,7 @@ function onSave(): void {
     formError.textContent = "Could not save on this phone. Storage may be blocked.";
     return;
   }
+  queueGithubSync();
 
   marks.stepOff = null;
   marks.touchdown = null;
@@ -1370,6 +1459,7 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
     pendingDeleteId = null;
     const next = loadTrials(localStorage).filter((entry) => entry.id !== trial.id);
     saveTrials(next, localStorage);
+    queueGithubSync();
     renderTrials();
   });
   item.append(button);

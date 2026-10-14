@@ -136,12 +136,23 @@
             <h3>Master log</h3>
             <p>
               Every saved jump in one table. Export to Excel or CSV — the first columns match the Jump
-              Test paste order in Byron’s workbook.
+              Test paste order in Byron’s workbook. Optional GitHub sync writes the same log to this
+              repo’s <code>data</code> branch for bots (token stays on the phone).
+            </p>
+          </li>
+          <li>
+            <h3>GitHub sync token</h3>
+            <p>
+              On GitHub → Settings → Developer settings → Personal access tokens → Fine-grained
+              tokens → Generate. Resource owner: your account. Repository access: only
+              <code>VerticalJumpAnalysis</code>. Permissions: Contents → Read and write. Paste the
+              token on Master log → GitHub sync. It is stored in this browser’s localStorage only —
+              never committed or logged.
             </p>
           </li>
           <li>
             <h3>Privacy</h3>
-            <p>Video stays on this phone. Only numbers are saved locally.</p>
+            <p>Video stays on this phone. Only numbers are saved locally (and optionally synced as numbers to the repo).</p>
           </li>
         </ol>
 
@@ -156,6 +167,22 @@
           <button type="button" id="master-export-csv" class="button-secondary">Export CSV</button>
         </div>
         <p id="master-export-status" class="detail" role="status"></p>
+        <div class="master-sync">
+          <h3 class="section-label">GitHub sync</h3>
+          <p class="detail">
+            Pushes the full log to <code>data/jump-log.csv</code> (and JSON) on the repo’s
+            <code>data</code> branch so bots can read it. Token stays in localStorage only.
+          </p>
+          <label class="field" for="github-token">
+            Fine-grained token (Contents read/write)
+            <input id="github-token" type="password" autocomplete="off" spellcheck="false" />
+          </label>
+          <div class="master-actions">
+            <button type="button" id="github-token-save" class="button-secondary">Save token</button>
+            <button type="button" id="github-sync-now" class="button-primary">Sync now</button>
+          </div>
+          <p id="github-sync-status" class="detail" role="status"></p>
+        </div>
         <div class="master-table-wrap">
           <table id="master-table" class="master-table">
             <thead>
