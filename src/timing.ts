@@ -35,26 +35,47 @@ export function isVariableRate(times: readonly number[]): boolean {
   return range.longest > range.shortest * 1.4;
 }
 
+export interface SloMoHint {
+  /**
+   * Apple `full-frame-rate-playback-intent` is 0: the file is meant to play
+   * slowed, not at capture rate. Photos still shows the higher capture fps.
+   */
+  slowMoPlayback?: boolean | null;
+}
+
 /**
  * iPhone slo-mo playback holds each captured frame for one or two ticks
  * (about 1/60 s and 1/30 s). The average of those holds is what the file's
  * timestamps measure (~43 fps on IMG_0227). Photos' fps is the capture rate,
  * about four times that average (~170 fps). Real time is the timestamp delta
  * divided by this stretch.
+ *
+ * Phone Photos exports sometimes flatten the gap pattern; then we still use
+ * the Apple slo-mo flag or a playback-rate band (about 28–55 fps).
  */
-export function sloMoStretch(times: readonly number[]): number {
+export function sloMoStretch(times: readonly number[], hint: SloMoHint = {}): number {
   const range = frameGapRange(times);
-  if (!range) return 1;
-  const ratio = range.longest / range.shortest;
-  if (ratio >= 1.6 && ratio <= 2.6 && range.shortest >= 0.012 && range.shortest <= 0.022) return 4;
+  if (range) {
+    const ratio = range.longest / range.shortest;
+    // Classic 1/60 + 1/30 hold pattern (and slight phone-export jitter).
+    if (ratio >= 1.5 && ratio <= 2.8 && range.shortest >= 0.01 && range.shortest <= 0.025) return 4;
+  }
+  const fps = measuredFps(times);
+  if (!fps) return 1;
+  const appleSloMo = hint.slowMoPlayback === true;
+  const looksLikeHeldSloMo = isVariableRate(times) && fps >= 28 && fps <= 55;
+  if (!appleSloMo && !looksLikeHeldSloMo) return 1;
+  // ~30 fps hold of 240 → 8×; ~40–55 fps hold of ~170–240 → 4×.
+  if (fps <= 36) return 8;
+  if (fps <= 55) return 4;
   return 1;
 }
 
 /** Capture frame rate implied by a playback clock. This is the number to show, not the hold average. */
-export function captureFps(times: readonly number[]): number | null {
+export function captureFps(times: readonly number[], hint: SloMoHint = {}): number | null {
   const playback = measuredFps(times);
   if (!playback) return null;
-  return playback * sloMoStretch(times);
+  return playback * sloMoStretch(times, hint);
 }
 
 /**
@@ -62,8 +83,12 @@ export function captureFps(times: readonly number[]): number | null {
  * playback timestamps uncorrected — that is exactly the 231 in / 850 ms bug.
  * An explicit user choice (uiFactor !== 1, or uiFactor matching detection) wins.
  */
-export function metricStretch(frameTimes: readonly number[] | undefined, uiFactor: number): number {
-  const detected = frameTimes ? sloMoStretch(frameTimes) : 1;
+export function metricStretch(
+  frameTimes: readonly number[] | undefined,
+  uiFactor: number,
+  hint: SloMoHint = {},
+): number {
+  const detected = frameTimes ? sloMoStretch(frameTimes, hint) : 1;
   if (!(uiFactor > 0)) return detected > 1 ? detected : 1;
   if (detected > 1 && uiFactor === 1) return detected;
   return uiFactor;

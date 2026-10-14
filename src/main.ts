@@ -18,7 +18,7 @@ import {
 } from "./format.ts";
 import { trialFormError } from "./form.ts";
 import { collectFrameTimes, transportEnabledAfterClockRead } from "./cadence.ts";
-import { parseMovFrameTimes } from "./mov.ts";
+import { parseMovClip } from "./mov.ts";
 import { analyzeClip } from "./pose.ts";
 import { previewMetrics, realSecondsOnClock } from "./metrics.ts";
 import { FrameSeeker, clampFrame } from "./seek.ts";
@@ -103,8 +103,12 @@ let measuring = false;
 let loadGeneration = 0;
 let measuredUrl: string | null = null;
 let frameTimes: number[] | null = null;
+/** Apple slo-mo tag / detection hint for stretch when gaps look flat on Photos exports. */
+let sloMoHint: { slowMoPlayback?: boolean | null } = {};
 /** Timestamps parsed from the file. Playback sampling is only the fallback. */
 let clockRead: Promise<number[] | null> = Promise.resolve(null);
+
+const BUILD_ID = "2026-10-14c";
 
 cadenceButton.addEventListener("click", () => {
   void detectCadence();
@@ -271,10 +275,6 @@ function loadFile(file: File): void {
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
   const generation = loadGeneration;
-  clockRead = file
-    .arrayBuffer()
-    .then((buffer) => parseMovFrameTimes(new Uint8Array(buffer)))
-    .catch(() => null);
   ready = false;
   frame = 0;
   marks.stepOff = null;
@@ -283,6 +283,16 @@ function loadFile(file: File): void {
   marks.landing = null;
   measuredUrl = null;
   frameTimes = null;
+  sloMoHint = {};
+  clockRead = file
+    .arrayBuffer()
+    .then((buffer) => {
+      const clip = parseMovClip(new Uint8Array(buffer));
+      if (!clip) return null;
+      sloMoHint = { slowMoPlayback: clip.slowMoPlayback };
+      return clip.times;
+    })
+    .catch(() => null);
   seeker.setClock(null);
   cadenceStatus.textContent = "";
   clipName.textContent = file.name;
@@ -341,23 +351,26 @@ function onReady(): void {
 function applyFrameClock(times: readonly number[]): void {
   frameTimes = [...times];
   seeker.setClock(frameTimes);
-  seeker.setFps(captureFps(times) ?? measuredFps(times) ?? 240);
   const playback = measuredFps(times);
-  const stretch = sloMoStretch(times);
+  const stretch = sloMoStretch(times, sloMoHint);
+  seeker.setFps(captureFps(times, sloMoHint) ?? playback ?? 240);
   if (!stretchTouched) {
     factor = stretch > 1 ? stretch : 1;
     slowInput.value = String(factor);
     syncChips();
   }
-  const capture = captureFps(times);
+  const capture = captureFps(times, sloMoHint);
+  // Always show capture rate when we know the stretch — never leave the
+  // playback average (~43) in the fps field on a slo-mo phone export.
   if (capture) fpsInput.value = capture.toFixed(1);
+  else if (playback) fpsInput.value = playback.toFixed(1);
   const variable = isVariableRate(times);
   cadenceStatus.textContent =
     stretch > 1
-      ? `Capture ${capture ? capture.toFixed(1) : "—"} fps. Playback holds frames at ${playback ? playback.toFixed(0) : "—"} fps, so every duration is divided by ${stretch}× (real time).`
+      ? `Capture ${capture ? capture.toFixed(1) : "—"} fps (build ${BUILD_ID}). Playback holds frames at ${playback ? playback.toFixed(0) : "—"} fps, so every duration is divided by ${stretch}× (real time).`
       : variable
-        ? `Variable frame rate, average ${playback ? playback.toFixed(0) : "—"} fps over ${frameTimes.length} frames. Times use each frame's timestamp.`
-        : `Measured ${playback ? playback.toFixed(0) : "—"} fps from ${frameTimes.length} frame timestamps. Contact, flight, and the box use those times.`;
+        ? `Variable frame rate, average ${playback ? playback.toFixed(0) : "—"} fps over ${frameTimes.length} frames (build ${BUILD_ID}). Times use each frame's timestamp.`
+        : `Measured ${playback ? playback.toFixed(0) : "—"} fps from ${frameTimes.length} frame timestamps (build ${BUILD_ID}). Contact, flight, and the box use those times.`;
   // Enable stepping as soon as we have a clock — do not wait for detectCadence.
   if (seeker.frameCount > 0) {
     ready = true;
@@ -423,7 +436,7 @@ async function detectCadence(): Promise<void> {
  */
 function activeStretch(): number {
   if (stretchTouched) return factor;
-  return metricStretch(frameTimes ?? undefined, factor);
+  return metricStretch(frameTimes ?? undefined, factor, sloMoHint);
 }
 
 function applyFactor(next: number): void {
@@ -550,7 +563,7 @@ function render(): void {
   frameLabel.textContent = String(frame);
   totalLabel.textContent = String(count);
   const playbackFps = frameTimes ? measuredFps(frameTimes) : null;
-  const shownFps = frameTimes ? captureFps(frameTimes) : null;
+  const shownFps = frameTimes ? captureFps(frameTimes, sloMoHint) : null;
   const variable = frameTimes ? isVariableRate(frameTimes) : false;
   const stretch = activeStretch();
   timeLabel.textContent =
@@ -558,7 +571,7 @@ function render(): void {
       ? formatClock(realSecondsOnClock(frameTimes, 0, frame, playbackFps ?? 1, stretch))
       : "—";
   timingReadout.textContent = frameTimes
-    ? sloMoStretch(frameTimes) > 1
+    ? sloMoStretch(frameTimes, sloMoHint) > 1
       ? `Capture ${shownFps ? shownFps.toFixed(0) : "—"} fps · ${formatFactor(stretch)}× slow-mo`
       : variable
         ? `Variable · average ${playbackFps ? playbackFps.toFixed(0) : "—"} fps · timed from frame stamps`

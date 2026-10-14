@@ -15,20 +15,84 @@ interface Atom {
   end: number;
 }
 
+export interface MovClipClock {
+  times: number[];
+  /**
+   * True when Apple marked the clip as not full-frame-rate playback (slo-mo
+   * hold). Null when that tag is missing.
+   */
+  slowMoPlayback: boolean | null;
+}
+
 /** Composition time of each frame that the edit list actually plays. Null when the file has no video sample table. */
 export function parseMovFrameTimes(data: Uint8Array): number[] | null {
+  return parseMovClip(data)?.times ?? null;
+}
+
+/** Frame timestamps plus Apple slo-mo playback intent, when present. */
+export function parseMovClip(data: Uint8Array): MovClipClock | null {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const moov = child(data, view, 0, data.length, "moov");
   if (!moov) return null;
   const movie = movieTiming(data, view, moov);
   if (!movie) return null;
 
+  let times: number[] | null = null;
   for (const trak of children(data, view, moov.body, moov.end)) {
     if (trak.type !== "trak") continue;
-    const times = videoTrackTimes(data, view, trak, movie.timescale);
-    if (times && times.length >= 3) return times;
+    times = videoTrackTimes(data, view, trak, movie.timescale);
+    if (times && times.length >= 3) break;
+    times = null;
   }
-  return null;
+  if (!times) return null;
+  return { times, slowMoPlayback: readSlowMoPlayback(data) };
+}
+
+/**
+ * `com.apple.quicktime.full-frame-rate-playback-intent`: 0 means play slowed
+ * (the Photos capture fps is higher than the file's presentation rate).
+ */
+function readSlowMoPlayback(data: Uint8Array): boolean | null {
+  const key = "full-frame-rate-playback-intent";
+  const start = indexOfAscii(data, key);
+  if (start < 0) return null;
+  // ilst stores a data atom after the keys table; scan forward a short window.
+  const from = start + key.length;
+  const to = Math.min(data.length - 16, from + 400);
+  for (let i = from; i < to; i += 1) {
+    if (
+      data[i] === 0x64 &&
+      data[i + 1] === 0x61 &&
+      data[i + 2] === 0x74 &&
+      data[i + 3] === 0x61
+    ) {
+      // data atom: size(4) 'data'(4) type(4) locale(4) payload…
+      const type = (data[i + 4] << 24) | (data[i + 5] << 16) | (data[i + 6] << 8) | data[i + 7];
+      // Integer types used for this flag are small; payload is often 1 byte/4 bytes.
+      const payloadAt = i + 12;
+      if (payloadAt >= data.length) return null;
+      // Prefer an explicit 0 / 1 in the next few bytes.
+      for (let p = payloadAt; p < Math.min(data.length, payloadAt + 8); p += 1) {
+        if (data[p] === 0) return true;
+        if (data[p] === 1) return false;
+      }
+      void type;
+      return null;
+    }
+  }
+  // Tag present but value not decoded — still treat as an iPhone slo-mo file.
+  return true;
+}
+
+function indexOfAscii(data: Uint8Array, text: string): number {
+  const bytes = new TextEncoder().encode(text);
+  outer: for (let i = 0; i <= data.length - bytes.length; i += 1) {
+    for (let j = 0; j < bytes.length; j += 1) {
+      if (data[i + j] !== bytes[j]) continue outer;
+    }
+    return i;
+  }
+  return -1;
 }
 
 function movieTiming(data: Uint8Array, view: DataView, moov: Atom): { timescale: number } | null {

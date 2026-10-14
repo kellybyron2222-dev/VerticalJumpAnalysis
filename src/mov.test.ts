@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { IMG_0227_MOOV_BASE64 } from "./fixtures/img0227-moov.ts";
 import { IMG_0227_FRAME_TIMES } from "./img0227-times.ts";
-import { parseMovFrameTimes } from "./mov.ts";
-import { alignClockToDuration, estimateBoxHeight } from "./timing.ts";
+import { parseMovClip, parseMovFrameTimes } from "./mov.ts";
+import { alignClockToDuration, captureFps, estimateBoxHeight, sloMoStretch } from "./timing.ts";
 
 const moov = decodeBase64(IMG_0227_MOOV_BASE64);
 
@@ -10,6 +10,16 @@ describe("parseMovFrameTimes", () => {
   it("reads IMG_0227 composition times from the moov atom", () => {
     const times = parseMovFrameTimes(new Uint8Array(moov));
     expect(times).toEqual([...IMG_0227_FRAME_TIMES]);
+  });
+
+  it("treats Apple slo-mo playback intent as a 4x capture clock", () => {
+    const clip = parseMovClip(new Uint8Array(moov));
+    expect(clip).not.toBeNull();
+    expect(clip!.slowMoPlayback).toBe(true);
+    expect(sloMoStretch(clip!.times, { slowMoPlayback: clip!.slowMoPlayback })).toBe(4);
+    const capture = captureFps(clip!.times, { slowMoPlayback: clip!.slowMoPlayback });
+    expect(capture).toBeGreaterThan(165);
+    expect(capture).toBeLessThan(180);
   });
 
   it("shifts a pre-edit mediaTime clock without changing the box", () => {
