@@ -98,6 +98,14 @@ export function mergeTrials(
   return [...map.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
+/** Stable fingerprint so we can detect saves/deletes during an in-flight push. */
+export function trialsFingerprint(trials: readonly TrialRecord[]): string {
+  return [...trials]
+    .map((t) => `${t.id}:${t.createdAt}:${t.notes ?? ""}:${t.boxHeightIn}:${t.jumpType}`)
+    .sort()
+    .join("|");
+}
+
 export function trialsToRemoteJson(trials: readonly TrialRecord[], updatedAt = new Date().toISOString()): string {
   const payload: RemoteLogPayload = { trials: [...trials], updatedAt };
   return `${JSON.stringify(payload, null, 2)}\n`;
@@ -228,34 +236,41 @@ async function putFile(
   sha: string | null,
   message: string,
   fetchImpl: GitHubFetch,
-): Promise<void> {
+): Promise<string | null> {
   const body: Record<string, string> = {
     message,
     content: encodeContent(text),
     branch: GITHUB_DATA_BRANCH,
   };
   if (sha) body.sha = sha;
-  const result = await githubJson(fetchImpl, token, `/contents/${path}`, {
+  const result = await githubJson<{ content?: { sha?: string } }>(fetchImpl, token, `/contents/${path}`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
   if (!result.ok) throw new Error(`Write ${path} failed (${result.status}).`);
+  return result.data?.content?.sha ?? null;
 }
 
 export interface SyncGithubResult {
+  /** Trials that should be kept in the local cache after this sync. */
   merged: TrialRecord[];
   pulled: number;
   pushed: boolean;
+  /** True when local changed during the push; caller should sync again. */
+  needsRepush: boolean;
   error?: string;
 }
 
 /**
- * Ensure data branch, pull/merge remote JSON, push CSV + JSON with sha retry.
+ * GitHub `data` branch is the source of truth. localStorage is a cache/outbox:
+ * - dirty (or healing an empty remote): push the local log as the full file
+ * - clean: adopt remote into the cache
+ * Re-reads local immediately before PUT so a save mid-flight is included.
  * Never logs the token.
  */
 export async function syncGithubLog(options: {
   token: string;
-  localTrials: readonly TrialRecord[];
+  getLocalTrials: () => readonly TrialRecord[];
   storage: KeyValueStore;
   fetchImpl?: GitHubFetch;
   maxRetries?: number;
@@ -263,36 +278,89 @@ export async function syncGithubLog(options: {
   const fetchImpl = options.fetchImpl ?? fetch.bind(globalThis);
   const maxRetries = options.maxRetries ?? 2;
   const token = options.token.trim();
-  if (!token) return { merged: [...options.localTrials], pulled: 0, pushed: false, error: "Add a GitHub token." };
+  if (!token) {
+    return {
+      merged: [...options.getLocalTrials()],
+      pulled: 0,
+      pushed: false,
+      needsRepush: false,
+      error: "Add a GitHub token.",
+    };
+  }
 
   try {
     await ensureDataBranch(token, fetchImpl);
     const remoteFile = await getFile(token, GITHUB_JSON_PATH, fetchImpl);
     const remoteTrials = parseRemoteJson(remoteFile.text);
     const meta = loadSyncMeta(options.storage);
-    const merged = mergeTrials(options.localTrials, remoteTrials);
-    const pulled = merged.length - options.localTrials.length > 0
-      ? Math.max(0, remoteTrials.filter((r) => !options.localTrials.some((l) => l.id === r.id)).length)
-      : 0;
+    const localBefore = options.getLocalTrials();
+    const healEmptyRemote = remoteTrials.length === 0 && localBefore.length > 0;
+    const localIsAuthority = meta.dirty || healEmptyRemote;
+
+    let toPush = localIsAuthority ? [...localBefore] : [...remoteTrials];
+    const pulled = localIsAuthority
+      ? 0
+      : Math.max(0, remoteTrials.filter((r) => !localBefore.some((l) => l.id === r.id)).length);
 
     let attempt = 0;
     let csvSha = (await getFile(token, GITHUB_CSV_PATH, fetchImpl)).sha;
     let jsonSha = remoteFile.sha;
     while (attempt <= maxRetries) {
       try {
+        // Re-read outbox immediately before encoding so mid-sync saves are included.
+        if (localIsAuthority || loadSyncMeta(options.storage).dirty) {
+          toPush = [...options.getLocalTrials()];
+        }
         const updatedAt = new Date().toISOString();
-        const csv = buildCsvText(merged);
-        const json = trialsToRemoteJson(merged, updatedAt);
-        await putFile(token, GITHUB_JSON_PATH, json, jsonSha, `Update jump log JSON (${merged.length})`, fetchImpl);
-        await putFile(token, GITHUB_CSV_PATH, csv, csvSha, `Update jump log CSV (${merged.length})`, fetchImpl);
+        const csv = buildCsvText(toPush);
+        const json = trialsToRemoteJson(toPush, updatedAt);
+        jsonSha = (await putFile(
+          token,
+          GITHUB_JSON_PATH,
+          json,
+          jsonSha,
+          `Update jump log JSON (${toPush.length})`,
+          fetchImpl,
+        )) ?? jsonSha;
+        csvSha = (await putFile(
+          token,
+          GITHUB_CSV_PATH,
+          csv,
+          csvSha,
+          `Update jump log CSV (${toPush.length})`,
+          fetchImpl,
+        )) ?? csvSha;
+
+        const latest = options.getLocalTrials();
+        const changedDuringPush =
+          localIsAuthority && trialsFingerprint(latest) !== trialsFingerprint(toPush);
+        if (changedDuringPush) {
+          saveSyncMeta(options.storage, {
+            dirty: true,
+            lastSyncedAt: updatedAt,
+            lastError: null,
+            mergedOnce: true,
+          });
+          return {
+            merged: [...latest],
+            pulled,
+            pushed: true,
+            needsRepush: true,
+          };
+        }
+
         saveSyncMeta(options.storage, {
           dirty: false,
           lastSyncedAt: updatedAt,
           lastError: null,
           mergedOnce: true,
         });
-        void meta;
-        return { merged, pulled, pushed: true };
+        return {
+          merged: toPush,
+          pulled,
+          pushed: true,
+          needsRepush: false,
+        };
       } catch (error) {
         attempt += 1;
         if (attempt > maxRetries) throw error;
@@ -300,11 +368,23 @@ export async function syncGithubLog(options: {
         jsonSha = (await getFile(token, GITHUB_JSON_PATH, fetchImpl)).sha;
       }
     }
-    return { merged, pulled, pushed: false, error: "Sync failed after retries." };
+    return {
+      merged: [...options.getLocalTrials()],
+      pulled: 0,
+      pushed: false,
+      needsRepush: false,
+      error: "Sync failed after retries.",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const meta = loadSyncMeta(options.storage);
-    saveSyncMeta(options.storage, { ...meta, lastError: message });
-    return { merged: [...options.localTrials], pulled: 0, pushed: false, error: message };
+    saveSyncMeta(options.storage, { ...meta, dirty: true, lastError: message });
+    return {
+      merged: [...options.getLocalTrials()],
+      pulled: 0,
+      pushed: false,
+      needsRepush: false,
+      error: message,
+    };
   }
 }

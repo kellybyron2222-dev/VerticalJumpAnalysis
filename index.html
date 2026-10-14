@@ -152,7 +152,10 @@
           </li>
           <li>
             <h3>Privacy</h3>
-            <p>Video stays on this phone. Only numbers are saved locally (and optionally synced as numbers to the repo).</p>
+            <p>
+              Video stays on this device. Jump numbers save to your GitHub jump log (token in this
+              browser only); this device keeps a cache if you are offline.
+            </p>
           </li>
         </ol>
 
@@ -161,7 +164,7 @@
 
       <section id="screen-master" class="screen" aria-labelledby="master-title" hidden>
         <h2 id="master-title">Master log</h2>
-        <p class="lede">All saved jumps on this phone. Sort columns, edit notes or fields, export.</p>
+        <p class="lede">Your jump log. Sort columns, edit notes or fields, export, sync to GitHub.</p>
         <div class="master-actions">
           <button type="button" id="master-export-xlsx" class="button-primary">Export to Excel</button>
           <button type="button" id="master-export-csv" class="button-secondary">Export CSV</button>
@@ -170,8 +173,9 @@
         <div class="master-sync">
           <h3 class="section-label">GitHub sync</h3>
           <p class="detail">
-            Pushes the full log to <code>data/jump-log.csv</code> (and JSON) on the repo’s
-            <code>data</code> branch so bots can read it. Token stays in localStorage only.
+            GitHub is the source of truth: the full log is written to
+            <code>data/jump-log.csv</code> and <code>data/jump-log.json</code> on the
+            <code>data</code> branch. This browser caches the log and queues offline edits.
           </p>
           <label class="field" for="github-token">
             Fine-grained token (Contents read/write)
@@ -245,7 +249,7 @@
 
       <section id="analyze" class="screen" hidden>
         <h2 class="screen-title">Jump Analysis</h2>
-        <p class="privacy">The clip stays on this phone. A saved jump stores frames and numbers only.</p>
+        <p class="privacy">The clip stays on this device. A saved jump stores frames and numbers in your jump log.</p>
 
         <div id="empty-video" class="empty">
           <h3>Load a slo-mo clip</h3>
@@ -495,8 +499,8 @@
         </section>
 
         <section class="saved" aria-labelledby="saved-title">
-          <h3 class="section-label" id="saved-title">Saved jumps <span id="saved-count">0</span></h3>
-          <p id="saved-empty">No jumps saved on this phone yet.</p>
+          <h3 class="section-label" id="saved-title">Jump log <span id="saved-count">0</span></h3>
+          <p id="saved-empty">No jumps in your log yet.</p>
           <ul id="jump-list"></ul>
         </section>
       </section>

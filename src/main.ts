@@ -139,6 +139,7 @@ const githubSyncStatus = must<HTMLElement>("#github-sync-status");
 let masterSortKey: MasterSortKey = "date";
 let masterSortAsc = false;
 let githubSyncBusy = false;
+let githubSyncAgain = false;
 /** Ordered heights on the box-test screen (3–5). */
 let boxTestHeights: number[] = [...DEFAULT_BOX_TEST_HEIGHTS];
 /** Results keyed by box height. */
@@ -426,26 +427,29 @@ function initMasterLogUi(): void {
   githubTokenInput.value = loadGithubToken(localStorage);
   must<HTMLButtonElement>("#github-token-save").addEventListener("click", () => {
     if (!saveGithubToken(localStorage, githubTokenInput.value)) {
-      githubSyncStatus.textContent = "Could not save token on this phone.";
+      githubSyncStatus.textContent = "Could not save token.";
       return;
     }
     githubTokenInput.value = loadGithubToken(localStorage);
     githubSyncStatus.textContent = githubTokenInput.value
-      ? "Token saved on this phone only."
+      ? "Token saved in this browser only. Syncing…"
       : "Token cleared.";
     renderGithubSyncStatus();
+    if (githubTokenInput.value) void runGithubSync({ force: true });
   });
   must<HTMLButtonElement>("#github-sync-now").addEventListener("click", () => {
     void runGithubSync({ force: true });
   });
   renderGithubSyncStatus();
+  if (loadGithubToken(localStorage)) void runGithubSync({ force: true });
 }
 
 function renderGithubSyncStatus(): void {
   const meta = loadSyncMeta(localStorage);
   const hasToken = Boolean(loadGithubToken(localStorage));
   const parts: string[] = [];
-  if (!hasToken) parts.push("No token — add one to sync.");
+  if (!hasToken) parts.push("No token — add one so the jump log syncs to GitHub.");
+  else if (meta.dirty) parts.push("Pending sync");
   else if (meta.lastSyncedAt) {
     const when = new Date(meta.lastSyncedAt);
     parts.push(
@@ -454,50 +458,69 @@ function renderGithubSyncStatus(): void {
         : `Last synced ${when.toLocaleString()}`,
     );
   } else parts.push("Never synced.");
-  if (meta.dirty) parts.push("Pending changes (outbox).");
   if (meta.lastError) parts.push(`Last error: ${meta.lastError}`);
-  githubSyncStatus.textContent = parts.join(" ");
+  githubSyncStatus.textContent = parts.join(" · ");
 }
 
-/** Mark outbox dirty and try a background push when a token exists. */
-function queueGithubSync(): void {
+/**
+ * Persist trials to the local cache/outbox and push to GitHub immediately.
+ * Returns whether the GitHub write succeeded (no token → false / queued).
+ */
+async function persistJumpLog(next: TrialRecord[]): Promise<boolean> {
+  if (!saveTrials(next, localStorage)) return false;
   markDirty(localStorage);
   renderGithubSyncStatus();
-  void runGithubSync({ force: false });
+  if (!loadGithubToken(localStorage)) return false;
+  return runGithubSync({ force: true });
 }
 
-async function runGithubSync(options: { force: boolean }): Promise<void> {
-  if (githubSyncBusy) return;
+async function runGithubSync(options: { force: boolean }): Promise<boolean> {
+  if (githubSyncBusy) {
+    githubSyncAgain = true;
+    return false;
+  }
   const token = loadGithubToken(localStorage);
   if (!token) {
     if (options.force) githubSyncStatus.textContent = "Add a GitHub token first.";
-    return;
+    return false;
   }
   const meta = loadSyncMeta(localStorage);
-  if (!options.force && !meta.dirty) return;
+  if (!options.force && !meta.dirty) return true;
 
   githubSyncBusy = true;
   githubSyncStatus.textContent = "Syncing to GitHub…";
+  let ok = false;
   try {
-    const localTrials = loadTrials(localStorage);
-    const result = await syncGithubLog({
-      token,
-      localTrials,
-      storage: localStorage,
-    });
-    if (result.error) {
+    do {
+      githubSyncAgain = false;
+      const result = await syncGithubLog({
+        token,
+        getLocalTrials: () => loadTrials(localStorage),
+        storage: localStorage,
+      });
+      if (result.error) {
+        markDirty(localStorage);
+        renderGithubSyncStatus();
+        ok = false;
+        break;
+      }
+      saveTrials(result.merged, localStorage);
+      renderTrials();
+      if (result.needsRepush || loadSyncMeta(localStorage).dirty || githubSyncAgain) {
+        markDirty(localStorage);
+        githubSyncAgain = true;
+        continue;
+      }
+      const pulledNote = result.pulled > 0 ? ` Restored ${result.pulled} from repo.` : "";
       renderGithubSyncStatus();
-      githubSyncStatus.textContent = `${githubSyncStatus.textContent} Error: ${result.error}`;
-      return;
-    }
-    saveTrials(result.merged, localStorage);
-    renderTrials();
-    const pulledNote = result.pulled > 0 ? ` Restored ${result.pulled} from repo.` : "";
-    renderGithubSyncStatus();
-    githubSyncStatus.textContent = `Synced ${result.merged.length} jumps.${pulledNote} ${githubSyncStatus.textContent}`;
+      githubSyncStatus.textContent = `Synced ${result.merged.length} jumps.${pulledNote}`;
+      ok = result.pushed;
+    } while (githubSyncAgain);
   } finally {
     githubSyncBusy = false;
   }
+  if (githubSyncAgain) return runGithubSync({ force: true });
+  return ok;
 }
 
 function stamp(): string {
@@ -541,11 +564,9 @@ function renderMasterLog(): void {
     del.className = "text-button";
     del.textContent = "Delete";
     del.addEventListener("click", () => {
-      if (!confirm("Delete this jump from the phone?")) return;
+      if (!confirm("Delete this jump from the log?")) return;
       const next = loadTrials(localStorage).filter((trial) => trial.id !== row.id);
-      saveTrials(next, localStorage);
-      queueGithubSync();
-      renderTrials();
+      void persistJumpLog(next).then(() => renderTrials());
     });
     actions.append(edit, del);
     tr.append(actions);
@@ -572,9 +593,7 @@ function editMasterTrial(id: string): void {
       ? { ...entry, jumpType, boxHeightIn, armSwing: armText === "yes", notes: notes.trim() }
       : entry,
   );
-  saveTrials(next, localStorage);
-  queueGithubSync();
-  renderTrials();
+  void persistJumpLog(next).then(() => renderTrials());
 }
 
 function renderBoxTestRows(): void {
@@ -735,7 +754,7 @@ function submitBoxTest(): void {
   }
   const jumpType = boxTestType.value as JumpType;
   const testId = boxTestSessionId;
-  const created = [];
+  const created: TrialRecord[] = [];
   for (const row of rows) {
     const trial = createTrial({
       fps: row.fps,
@@ -758,28 +777,32 @@ function submitBoxTest(): void {
     return;
   }
   const existing = loadTrials(localStorage);
-  if (!saveTrials([...created, ...existing], localStorage)) {
-    boxTestStatus.textContent = "Could not save on this phone.";
-    return;
-  }
-  queueGithubSync();
-  const summaries = summariesFromRowResults(rows);
-  const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
-  if (!rec) {
+  void (async () => {
+    const synced = await persistJumpLog([...created, ...existing]);
+    if (!loadTrials(localStorage).some((t) => created.some((c) => c.id === t.id))) {
+      boxTestStatus.textContent = "Could not save the jump log.";
+      return;
+    }
+    const summaries = summariesFromRowResults(rows);
+    const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
+    if (!rec) {
+      boxTestResult.hidden = false;
+      boxTestResult.textContent = "Not enough data to recommend.";
+      return;
+    }
+    saveWorkingBox(localStorage, jumpType, rec.recommendedBoxIn);
+    boxInput.value = String(rec.recommendedBoxIn);
+    boxAutoFilled = false;
+    syncChips();
     boxTestResult.hidden = false;
-    boxTestResult.textContent = "Not enough data to recommend.";
-    return;
-  }
-  saveWorkingBox(localStorage, jumpType, rec.recommendedBoxIn);
-  boxInput.value = String(rec.recommendedBoxIn);
-  boxAutoFilled = false;
-  syncChips();
-  boxTestResult.hidden = false;
-  boxTestResult.textContent = rec.message;
-  boxTestChart.replaceChildren(renderBoxTestChart(rec.summaries));
-  boxTestSessionId = createBoxTestId();
-  boxTestStatus.textContent = "Test saved. Working box updated.";
-  renderTrials();
+    boxTestResult.textContent = rec.message;
+    boxTestChart.replaceChildren(renderBoxTestChart(rec.summaries));
+    boxTestSessionId = createBoxTestId();
+    boxTestStatus.textContent = synced
+      ? "Test saved to your jump log. Working box updated."
+      : "Test saved, will sync. Working box updated.";
+    renderTrials();
+  })();
 }
 
 function showScreen(screen: AppScreen): void {
@@ -1237,24 +1260,26 @@ function onSave(): void {
   }
 
   const trials = loadTrials(localStorage);
-  const saved = saveTrials([trial, ...trials], localStorage);
-  if (!saved) {
-    formError.hidden = false;
-    formError.textContent = "Could not save on this phone. Storage may be blocked.";
-    return;
-  }
-  queueGithubSync();
-
   marks.stepOff = null;
   marks.touchdown = null;
   marks.takeoff = null;
   marks.landing = null;
   notesInput.value = "";
   formError.hidden = true;
-  saveStatus.textContent = "Jump saved on this phone.";
+  saveStatus.textContent = "Saving…";
   render();
-  renderTrials();
-  must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });
+  void (async () => {
+    const synced = await persistJumpLog([trial, ...trials]);
+    if (!loadTrials(localStorage).some((t) => t.id === trial.id)) {
+      formError.hidden = false;
+      formError.textContent = "Could not save the jump log. Storage may be blocked.";
+      saveStatus.textContent = "";
+      return;
+    }
+    saveStatus.textContent = synced ? "Saved to your jump log" : "Saved, will sync";
+    renderTrials();
+    must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });
+  })();
 }
 
 function renderTrials(): void {
@@ -1458,9 +1483,7 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
     }
     pendingDeleteId = null;
     const next = loadTrials(localStorage).filter((entry) => entry.id !== trial.id);
-    saveTrials(next, localStorage);
-    queueGithubSync();
-    renderTrials();
+    void persistJumpLog(next).then(() => renderTrials());
   });
   item.append(button);
   return item;
