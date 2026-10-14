@@ -15,10 +15,10 @@
       content="Mark drop jumps and depth jumps from iPhone slow-motion video. Video stays on the phone."
     />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Jump Lab · 2026-10-14j</title>
+    <title>Jump Lab · 2026-10-14k</title>
     <script>
       (function () {
-        var PAGE = "2026-10-14j";
+        var PAGE = "2026-10-14k";
         if ("serviceWorker" in navigator) {
           navigator.serviceWorker.getRegistrations().then(function (regs) {
             regs.forEach(function (reg) {
@@ -136,6 +136,29 @@
             <p>Video stays on this phone. Only numbers are saved locally.</p>
           </li>
         </ol>
+
+        <h3 class="section-label">Excel sync</h3>
+        <p class="detail">
+          Connect a personal Microsoft account to append Friday drop jumps to your OneDrive workbook.
+          Depth jumps stay queued until that sheet section is defined.
+        </p>
+        <p id="excel-account" class="detail baseline-status">Not connected.</p>
+        <button type="button" id="excel-connect" class="button-secondary">Connect Excel</button>
+        <button type="button" id="excel-sync-now" class="button-primary">Sync now</button>
+        <p id="excel-sync-status" class="detail" role="status"></p>
+        <label class="field" for="excel-workbook">
+          Workbook path
+          <input id="excel-workbook" type="text" autocomplete="off" />
+        </label>
+        <label class="field" for="excel-sheet">
+          Sheet name
+          <input id="excel-sheet" type="text" autocomplete="off" />
+        </label>
+        <label class="field" for="excel-header-row">
+          Header row (Friday drop jumps)
+          <input id="excel-header-row" type="number" inputmode="numeric" min="1" step="1" />
+        </label>
+
         <button type="button" id="dismiss-guide" class="button-primary">Go to Jump Analysis</button>
       </section>
 
@@ -224,7 +247,7 @@
             </div>
             <p id="timing-readout" class="cadence-status">Measuring frame times…</p>
             <p id="cadence-status" class="cadence-status" role="status"></p>
-            <p class="build-line">Build <span id="build-label">2026-10-14j</span></p>
+            <p class="build-line">Build <span id="build-label">2026-10-14k</span></p>
           </details>
 
           <div class="transport" role="group" aria-label="Frame step">

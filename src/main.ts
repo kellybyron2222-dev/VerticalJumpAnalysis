@@ -72,6 +72,22 @@ import {
   summariesFromRowResults,
   type BoxTestRowResult,
 } from "./boxTestPipeline.ts";
+import {
+  connectExcelRedirect,
+  excelAccountLabel,
+  getGraphToken,
+  handleRedirectPromise,
+  msalConfigured,
+} from "./excelAuth.ts";
+import {
+  enqueueTrial,
+  loadExcelQueue,
+  loadExcelSettings,
+  saveExcelQueue,
+  saveExcelSettings,
+  syncStatusFor,
+} from "./excelQueue.ts";
+import { syncPendingDrops } from "./excelSync.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -115,6 +131,13 @@ const boxTestSubmit = must<HTMLButtonElement>("#box-test-submit");
 const boxTestResult = must<HTMLElement>("#box-test-result");
 const boxTestChart = must<HTMLElement>("#box-test-chart");
 const boxTestFile = must<HTMLInputElement>("#box-test-file");
+const excelConnect = must<HTMLButtonElement>("#excel-connect");
+const excelSyncNow = must<HTMLButtonElement>("#excel-sync-now");
+const excelAccount = must<HTMLElement>("#excel-account");
+const excelSyncStatus = must<HTMLElement>("#excel-sync-status");
+const excelWorkbook = must<HTMLInputElement>("#excel-workbook");
+const excelSheet = must<HTMLInputElement>("#excel-sheet");
+const excelHeaderRow = must<HTMLInputElement>("#excel-header-row");
 /** Ordered heights on the box-test screen (3–5). */
 let boxTestHeights: number[] = [...DEFAULT_BOX_TEST_HEIGHTS];
 /** Results keyed by box height. */
@@ -354,10 +377,94 @@ boxTestFile.addEventListener("change", () => {
 boxTestSubmit.addEventListener("click", () => submitBoxTest());
 
 renderBoxTestRows();
+initExcelUi();
 const firstVisit = localStorage.getItem(VISITED_KEY) !== "1";
 showScreen(firstVisit ? "directions" : "analyze");
 renderTrials();
 render();
+void bootstrapExcel();
+
+function initExcelUi(): void {
+  const settings = loadExcelSettings(localStorage);
+  excelWorkbook.value = settings.workbookPath;
+  excelSheet.value = settings.worksheet;
+  excelHeaderRow.value = String(settings.headerRow);
+  const persistSettings = () => {
+    const headerRow = Number(excelHeaderRow.value);
+    saveExcelSettings(localStorage, {
+      workbookPath: excelWorkbook.value.trim() || settings.workbookPath,
+      worksheet: excelSheet.value.trim() || settings.worksheet,
+      headerRow: Number.isFinite(headerRow) && headerRow >= 1 ? headerRow : settings.headerRow,
+    });
+  };
+  excelWorkbook.addEventListener("change", persistSettings);
+  excelSheet.addEventListener("change", persistSettings);
+  excelHeaderRow.addEventListener("change", persistSettings);
+  excelConnect.addEventListener("click", () => {
+    void (async () => {
+      try {
+        if (!msalConfigured()) {
+          excelSyncStatus.textContent = "Set MS_CLIENT_ID in src/config.ts, then rebuild.";
+          return;
+        }
+        excelSyncStatus.textContent = "Redirecting to Microsoft…";
+        await connectExcelRedirect();
+      } catch (error) {
+        excelSyncStatus.textContent = error instanceof Error ? error.message : String(error);
+      }
+    })();
+  });
+  excelSyncNow.addEventListener("click", () => {
+    void runExcelSync();
+  });
+  window.addEventListener("online", () => {
+    void runExcelSync();
+  });
+}
+
+async function bootstrapExcel(): Promise<void> {
+  try {
+    await handleRedirectPromise();
+  } catch {
+    // ignore redirect parse errors
+  }
+  const label = await excelAccountLabel();
+  excelAccount.textContent = label ? `Connected · ${label}` : msalConfigured() ? "Not connected." : "Client id not set.";
+  if (label) void runExcelSync();
+}
+
+async function runExcelSync(): Promise<void> {
+  if (!msalConfigured()) {
+    excelSyncStatus.textContent = "Set MS_CLIENT_ID in src/config.ts first.";
+    return;
+  }
+  excelSyncStatus.textContent = "Syncing…";
+  try {
+    const token = await getGraphToken();
+    if (!token) {
+      excelSyncStatus.textContent = "Sign in with Connect Excel first.";
+      return;
+    }
+    const result = await syncPendingDrops({
+      token,
+      trials: loadTrials(localStorage),
+      storage: localStorage,
+      settings: loadExcelSettings(localStorage),
+    });
+    excelSyncStatus.textContent =
+      result.errors.length > 0
+        ? `Sync stopped: ${result.errors[0]}`
+        : `Synced ${result.wrote} · skipped ${result.skipped}`;
+    renderTrials();
+  } catch (error) {
+    excelSyncStatus.textContent = error instanceof Error ? error.message : String(error);
+  }
+}
+
+function queueTrialForExcel(trial: TrialRecord): void {
+  const next = enqueueTrial(loadExcelQueue(localStorage), trial);
+  saveExcelQueue(localStorage, next);
+}
 
 function renderBoxTestRows(): void {
   boxTestRows.replaceChildren();
@@ -544,6 +651,7 @@ function submitBoxTest(): void {
     boxTestStatus.textContent = "Could not save on this phone.";
     return;
   }
+  for (const trial of created) queueTrialForExcel(trial);
   const summaries = summariesFromRowResults(rows);
   const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
   if (!rec) {
@@ -1030,6 +1138,8 @@ function onSave(): void {
   notesInput.value = "";
   formError.hidden = true;
   saveStatus.textContent = "Jump saved on this phone.";
+  queueTrialForExcel(trial);
+  void runExcelSync();
   render();
   renderTrials();
   must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });
@@ -1220,6 +1330,21 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
     notes.textContent = trial.notes;
     item.append(notes);
   }
+
+  const sync = document.createElement("p");
+  sync.className = "notes excel-sync-flag";
+  const queue = loadExcelQueue(localStorage);
+  const status = syncStatusFor(queue, trial.id);
+  const itemNote = queue.items.find((entry) => entry.trialId === trial.id)?.note;
+  sync.textContent =
+    status === "synced"
+      ? "Excel · synced"
+      : status === "pending"
+        ? "Excel · pending"
+        : status === "blocked"
+          ? `Excel · ${itemNote ?? "blocked"}`
+          : "Excel · not queued";
+  item.append(sync);
 
   const button = document.createElement("button");
   button.type = "button";
