@@ -672,6 +672,30 @@ legend {
   color: var(--ld);
 }
 
+.box-test {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+#box-test-height-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+#box-test-height-chips label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+#box-test-start,
+#box-test-finish {
+  margin-top: 0.55rem;
+  margin-right: 0.5rem;
+}
+
 .box-chart {
   display: block;
   width: 100%;

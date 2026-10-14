@@ -1,4 +1,5 @@
 import type { CellBaseline, MetricBaseline, WeeklyMean } from "./baseline.ts";
+import { boxTestProfileDays } from "./boxTest.ts";
 import { trialDay } from "./sessions.ts";
 import type { JumpType, TrialRecord } from "./storage.ts";
 
@@ -107,7 +108,7 @@ export function raiseBoxSignal(
   return { signal: "none", reason: "Raise box · not yet" };
 }
 
-/** Local days where this jump type hit at least `minBoxes` distinct box heights. */
+/** Local days where this jump type hit at least `minBoxes` distinct box heights (or a box test). */
 export function fullProfileDays(
   trials: readonly TrialRecord[],
   jumpType?: JumpType,
@@ -121,10 +122,13 @@ export function fullProfileDays(
     set.add(trial.boxHeightIn);
     byDay.set(day, set);
   }
-  return [...byDay.entries()]
+  const fromSessions = [...byDay.entries()]
     .filter(([, boxes]) => boxes.size >= minBoxes)
-    .map(([day]) => day)
-    .sort();
+    .map(([day]) => day);
+  const fromTests = boxTestProfileDays(
+    jumpType ? trials.filter((t) => t.jumpType === jumpType) : trials,
+  );
+  return [...new Set([...fromSessions, ...fromTests])].sort();
 }
 
 /** Whole weeks between two YYYY-MM-DD day (or week) keys. */

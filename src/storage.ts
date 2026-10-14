@@ -25,6 +25,8 @@ export interface TrialRecord {
   slowMoFactor?: number;
   /** Last frame on the box, when marked. */
   stepOffFrame?: number;
+  /** Optimal-box test session id, when this jump was recorded in Box test mode. */
+  boxTestId?: string;
 }
 
 export interface NewTrialInput {
@@ -38,6 +40,7 @@ export interface NewTrialInput {
   landingFrame: number;
   slowMoFactor?: number;
   stepOffFrame?: number | null;
+  boxTestId?: string;
   frameTimes?: readonly number[];
   id?: string;
   createdAt?: string;
@@ -97,7 +100,7 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
   if (!Number.isFinite(input.boxHeightIn) || input.boxHeightIn <= 0) return null;
   if (input.jumpType !== "drop" && input.jumpType !== "depth") return null;
 
-  const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame"> = {};
+  const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame" | "boxTestId"> = {};
   if (input.slowMoFactor !== undefined && Number.isFinite(input.slowMoFactor) && input.slowMoFactor > 0) {
     extra.slowMoFactor = input.slowMoFactor;
   }
@@ -108,6 +111,9 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
     input.stepOffFrame < input.touchdownFrame
   ) {
     extra.stepOffFrame = input.stepOffFrame;
+  }
+  if (typeof input.boxTestId === "string" && input.boxTestId.length > 0) {
+    extra.boxTestId = input.boxTestId;
   }
 
   return {

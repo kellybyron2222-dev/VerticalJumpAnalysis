@@ -6,7 +6,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 ## Status
 
-Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, and box-profile retest reminder in the session view. Milestone 5 is specified below and is not built.
+Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, box-profile retest reminder, and an optimal Box test (3–5 heights, tagged jumps, RSI/contact recommendation saved as working box; doubles as the 4-week retest). Milestone 5 is specified below and is not built.
 
 Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
 
@@ -113,6 +113,7 @@ Done when all of the following work (per jump type + box height, for height, con
 - Raise-box indicator (per jump type + box): ready when RSI weekly mean is > 1× CV above baseline for 2 consecutive weeks and contact-time weekly mean is ≤ target (default 250 ms, editable) in both weeks; show hold if contact is above target or trending up (watch/real in the worse direction).
 - Box-profile retest reminder when 4+ weeks have passed since the last day that tested 3+ different box heights.
 - Raise-box / retest helpers are pure functions with unit tests.
+- Optimal Box test mode (drop or depth): pick 3–5 heights (default 6/12/18/24), on-screen guide (3 jumps/height, ~1 min between jumps, 2–3 min between heights); jumps tagged with a test id. Recommend the height with highest mean RSI and mean contact ≤ target (shared 250 ms setting); within 1× CV pick the lower box; if none meet target, say so and suggest the lowest. Show RSI + contact by box for that test; save recommendation as the working box for that jump type. Completing a box test counts toward the 4-week profile retest. Pure helpers + unit tests.
 
 ### Milestone 5 — Excel, then optional OneDrive
 

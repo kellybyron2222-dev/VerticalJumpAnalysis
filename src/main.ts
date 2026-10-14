@@ -43,6 +43,7 @@ import { metricByDate, sessionsForDay, trialDay, weekKey, type SessionMetric } f
 import { metricLabel, renderBoxChart } from "./chart.ts";
 import { BUILD_ID, ensureLatestBuild } from "./version.ts";
 import {
+  DEFAULT_CV,
   evaluateCell,
   formatFlag,
   formatStatus,
@@ -57,6 +58,17 @@ import {
   raiseBoxSignal,
   saveGctTargetMs,
 } from "./raiseBox.ts";
+import {
+  loadActiveBoxTest,
+  loadWorkingBox,
+  recommendBoxHeight,
+  renderBoxTestChart,
+  saveActiveBoxTest,
+  saveWorkingBox,
+  startBoxTest,
+  summarizeBoxTest,
+  type ActiveBoxTest,
+} from "./boxTest.ts";
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
@@ -88,6 +100,13 @@ const sessionEmpty = must<HTMLElement>("#session-empty");
 const sessionList = must<HTMLUListElement>("#session-list");
 const gctTargetInput = must<HTMLInputElement>("#gct-target");
 const profileRetest = must<HTMLElement>("#profile-retest");
+const boxTestType = must<HTMLSelectElement>("#box-test-type");
+const boxTestStatus = must<HTMLElement>("#box-test-status");
+const boxTestStart = must<HTMLButtonElement>("#box-test-start");
+const boxTestFinish = must<HTMLButtonElement>("#box-test-finish");
+const boxTestResult = must<HTMLElement>("#box-test-result");
+const boxTestChart = must<HTMLElement>("#box-test-chart");
+let activeBoxTest: ActiveBoxTest | null = loadActiveBoxTest(localStorage);
 const chartRoot = must<HTMLElement>("#chart-root");
 const chartLegend = must<HTMLElement>("#chart-legend");
 const chartMetric = must<HTMLSelectElement>("#chart-metric");
@@ -287,9 +306,72 @@ gctTargetInput.addEventListener("change", () => {
   saveGctTargetMs(localStorage, value);
   renderTrials();
 });
+boxTestStart.addEventListener("click", () => {
+  const heights = [...document.querySelectorAll<HTMLInputElement>("#box-test-height-chips input:checked")].map(
+    (input) => Number(input.value),
+  );
+  const jumpType = boxTestType.value as JumpType;
+  const test = startBoxTest(jumpType, heights);
+  if (!test) {
+    boxTestStatus.textContent = "Pick 3 to 5 box heights.";
+    return;
+  }
+  activeBoxTest = test;
+  saveActiveBoxTest(localStorage, test);
+  const typeInput = document.querySelector<HTMLInputElement>(`input[name="jumpType"][value="${jumpType}"]`);
+  if (typeInput) typeInput.checked = true;
+  boxInput.value = String(test.heights[0]);
+  boxAutoFilled = false;
+  syncChips();
+  renderBoxTestUi();
+  render();
+});
+boxTestFinish.addEventListener("click", () => {
+  if (!activeBoxTest) return;
+  const trials = loadTrials(localStorage);
+  const summaries = summarizeBoxTest(trials, activeBoxTest.id, activeBoxTest.heights);
+  const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
+  if (!rec) {
+    boxTestResult.hidden = false;
+    boxTestResult.textContent = "Save at least one jump in this test first.";
+    return;
+  }
+  saveWorkingBox(localStorage, activeBoxTest.jumpType, rec.recommendedBoxIn);
+  boxInput.value = String(rec.recommendedBoxIn);
+  boxAutoFilled = false;
+  syncChips();
+  boxTestResult.hidden = false;
+  boxTestResult.textContent = rec.message;
+  boxTestChart.replaceChildren(renderBoxTestChart(rec.summaries));
+  activeBoxTest = null;
+  saveActiveBoxTest(localStorage, null);
+  renderBoxTestUi();
+  renderTrials();
+  render();
+});
+boxTestType.addEventListener("change", () => {
+  const working = loadWorkingBox(localStorage, boxTestType.value as JumpType);
+  if (working && !activeBoxTest) boxInput.value = String(working);
+});
 
+renderBoxTestUi();
 renderTrials();
 render();
+
+function renderBoxTestUi(): void {
+  if (activeBoxTest) {
+    boxTestStatus.textContent = `Active ${activeBoxTest.jumpType} test · heights ${activeBoxTest.heights.join(", ")} in · saves are tagged`;
+    boxTestStart.hidden = true;
+    boxTestFinish.hidden = false;
+    boxTestType.value = activeBoxTest.jumpType;
+    boxTestType.disabled = true;
+  } else {
+    boxTestStatus.textContent = "Not in a box test.";
+    boxTestStart.hidden = false;
+    boxTestFinish.hidden = true;
+    boxTestType.disabled = false;
+  }
+}
 
 function showGuide(): void {
   guide.hidden = false;
@@ -722,6 +804,12 @@ function onSave(): void {
   }
   if (marks.touchdown === null || marks.takeoff === null || marks.landing === null) return;
 
+  if (activeBoxTest && jumpType !== activeBoxTest.jumpType) {
+    formError.hidden = false;
+    formError.textContent = `Box test is ${activeBoxTest.jumpType} — switch jump type or finish the test.`;
+    return;
+  }
+
   const trial = createTrial({
     fps,
     jumpType: jumpType as JumpType,
@@ -733,6 +821,7 @@ function onSave(): void {
     landingFrame: marks.landing,
     slowMoFactor: activeStretch(),
     stepOffFrame: marks.stepOff,
+    boxTestId: activeBoxTest?.id,
     frameTimes: frameTimes ?? undefined,
   });
   if (!trial) {
@@ -755,7 +844,13 @@ function onSave(): void {
   marks.landing = null;
   notesInput.value = "";
   formError.hidden = true;
-  saveStatus.textContent = "Jump saved on this phone.";
+  saveStatus.textContent = activeBoxTest
+    ? `Jump saved · box test ${activeBoxTest.heights.join("/")} in`
+    : "Jump saved on this phone.";
+  if (activeBoxTest) {
+    const summaries = summarizeBoxTest([trial, ...trials], activeBoxTest.id, activeBoxTest.heights);
+    boxTestChart.replaceChildren(renderBoxTestChart(summaries));
+  }
   render();
   renderTrials();
   must<HTMLElement>("#session-section").scrollIntoView({ block: "start" });
