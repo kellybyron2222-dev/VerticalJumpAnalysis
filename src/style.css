@@ -467,6 +467,69 @@ video {
   padding: 0.35rem;
 }
 
+.profile-active {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.profiles-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.profile-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.profile-row-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.profile-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.profile-prompt {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgba(28, 25, 20, 0.45);
+}
+
+.profile-prompt-card {
+  width: min(100%, 22rem);
+  background: var(--card);
+  border-radius: 16px;
+  padding: 1.25rem 1.15rem 1.35rem;
+  box-shadow: var(--shadow);
+}
+
+.profile-prompt-card h2 {
+  margin: 0 0 0.4rem;
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-size: 1.7rem;
+}
+
+.profile-prompt[hidden] {
+  display: none !important;
+}
+
 .timeline {
   position: relative;
   height: 28px;

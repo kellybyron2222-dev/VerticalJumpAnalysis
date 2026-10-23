@@ -53,8 +53,9 @@
     <div id="app">
       <header class="top">
         <div>
-          <p class="eyebrow">Byron</p>
+          <p class="eyebrow" id="profile-eyebrow">Jump Lab</p>
           <h1>Jump Lab</h1>
+          <p class="profile-active" id="profile-active-label">Profile: —</p>
         </div>
         <div class="menu">
           <button
@@ -71,9 +72,38 @@
             <button type="button" id="nav-box-test" role="menuitem">Optimal Box Height Analysis</button>
             <button type="button" id="nav-analyze" role="menuitem">Jump Analysis</button>
             <button type="button" id="nav-master-log" role="menuitem">Master log</button>
+            <button type="button" id="nav-profiles" role="menuitem">Profiles</button>
           </div>
         </div>
       </header>
+
+      <section id="screen-profiles" class="screen" aria-labelledby="profiles-title" hidden>
+        <h2 id="profiles-title">Profiles</h2>
+        <p class="lede">
+          Each profile keeps its own jumps and settings on this device. Only Byron’s profile can sync
+          to GitHub.
+        </p>
+        <p id="profiles-status" class="detail" role="status"></p>
+        <ul id="profiles-list" class="profiles-list"></ul>
+        <label class="field" for="profile-new-name">
+          New profile name
+          <input id="profile-new-name" type="text" maxlength="40" autocomplete="off" />
+        </label>
+        <button type="button" id="profile-create" class="button-primary">Create profile</button>
+      </section>
+
+      <div id="profile-create-prompt" class="profile-prompt" hidden>
+        <div class="profile-prompt-card">
+          <h2>Create your profile</h2>
+          <p>Jump Lab keeps each person’s jumps separate on this phone.</p>
+          <label class="field" for="profile-first-name">
+            Your name
+            <input id="profile-first-name" type="text" maxlength="40" autocomplete="name" />
+          </label>
+          <button type="button" id="profile-first-create" class="button-primary">Get started</button>
+          <p id="profile-first-status" class="detail" role="status"></p>
+        </div>
+      </div>
 
       <section id="guide" class="screen guide" aria-labelledby="guide-title" hidden>
         <h2 id="guide-title">Directions</h2>

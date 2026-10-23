@@ -55,6 +55,7 @@ import {
   loadTrials,
   saveTrials,
   type JumpType,
+  type KeyValueStore,
   type TrialRecord,
 } from "./storage.ts";
 import {
@@ -113,15 +114,42 @@ import {
   saveGithubToken,
   syncGithubLog,
 } from "./githubSync.ts";
+import {
+  bootProfiles,
+  createProfile,
+  createProfileStore,
+  deleteProfile,
+  getActiveProfile,
+  loadProfiles,
+  renameProfile,
+  switchProfile,
+  VISITED_KEY,
+  type Profile,
+} from "./profiles.ts";
+
+const rootStorage: KeyValueStore = globalThis.localStorage;
+let bootState = bootProfiles(rootStorage);
+let store: KeyValueStore =
+  bootState.store ??
+  ({
+    getItem: () => null,
+    setItem: () => {
+      /* blocked until a profile exists */
+    },
+  } satisfies KeyValueStore);
+let activeProfile: Profile | null = bootState.active;
 
 const guide = must<HTMLElement>("#guide");
 const analyze = must<HTMLElement>("#analyze");
 const screenBox = must<HTMLElement>("#screen-box");
 const screenMaster = must<HTMLElement>("#screen-master");
+const screenProfiles = must<HTMLElement>("#screen-profiles");
+const profileCreatePrompt = must<HTMLElement>("#profile-create-prompt");
+const profileActiveLabel = must<HTMLElement>("#profile-active-label");
+const profileEyebrow = must<HTMLElement>("#profile-eyebrow");
 const menuButton = must<HTMLButtonElement>("#menu-button");
 const menuPanel = must<HTMLElement>("#menu-panel");
-const VISITED_KEY = "jumpLab.visited.v1";
-type AppScreen = "directions" | "box" | "analyze" | "master";
+type AppScreen = "directions" | "box" | "analyze" | "master" | "profiles";
 const videoInput = must<HTMLInputElement>("#video-input");
 const video = must<HTMLVideoElement>("#video");
 const videoStatus = must<HTMLElement>("#video-status");
@@ -184,7 +212,7 @@ const chartLegend = must<HTMLElement>("#chart-legend");
 const chartMetric = must<HTMLSelectElement>("#chart-metric");
 const chartJumpType = must<HTMLSelectElement>("#chart-jump-type");
 const chartModeChips = document.querySelectorAll<HTMLButtonElement>("#chart-mode-chips button");
-let chartMode: ChartMode = loadChartModePref(localStorage);
+let chartMode: ChartMode = loadChartModePref(store);
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const highAccuracy = must<HTMLInputElement>("#high-accuracy");
@@ -194,7 +222,7 @@ const detectProgressWrap = must<HTMLElement>(".detect-progress");
 const detectProgressBar = must<HTMLProgressElement>("#detect-progress-bar");
 const checkMarksFlag = must<HTMLElement>("#check-marks-flag");
 const marksPanel = must<HTMLElement>("#marks-panel");
-let jumpCountChoice: JumpCountChoice = loadJumpCountPref(localStorage);
+let jumpCountChoice: JumpCountChoice = loadJumpCountPref(store);
 
 function syncJumpCountChips(): void {
   for (const chip of jumpCountChips) {
@@ -206,7 +234,7 @@ function syncJumpCountChips(): void {
 for (const chip of jumpCountChips) {
   chip.addEventListener("click", () => {
     jumpCountChoice = parseJumpCountChoice(chip.dataset.jumps);
-    saveJumpCountPref(localStorage, jumpCountChoice);
+    saveJumpCountPref(store, jumpCountChoice);
     syncJumpCountChips();
   });
 }
@@ -220,7 +248,7 @@ function syncChartModeChips(): void {
 for (const chip of chartModeChips) {
   chip.addEventListener("click", () => {
     chartMode = parseChartMode(chip.dataset.mode);
-    saveChartModePref(localStorage, chartMode);
+    saveChartModePref(store, chartMode);
     syncChartModeChips();
     renderHistory();
   });
@@ -345,6 +373,34 @@ must<HTMLButtonElement>("#nav-master-log").addEventListener("click", () => {
   closeMenu();
   showScreen("master");
 });
+must<HTMLButtonElement>("#nav-profiles").addEventListener("click", () => {
+  closeMenu();
+  showScreen("profiles");
+});
+
+must<HTMLButtonElement>("#profile-create").addEventListener("click", () => {
+  const input = must<HTMLInputElement>("#profile-new-name");
+  const status = must<HTMLElement>("#profiles-status");
+  try {
+    const profile = createProfile(rootStorage, input.value, { allowGithub: false });
+    input.value = "";
+    bindActiveStore(profile);
+    status.textContent = `Created ${profile.name}.`;
+    renderProfilesUi();
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
+
+must<HTMLButtonElement>("#profile-first-create").addEventListener("click", () => {
+  const input = must<HTMLInputElement>("#profile-first-name");
+  const status = must<HTMLElement>("#profile-first-status");
+  try {
+    finishFirstProfile(input.value);
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : String(error);
+  }
+});
 
 menuButton.addEventListener("click", () => {
   const open = menuPanel.hidden;
@@ -431,11 +487,11 @@ jumpForm.addEventListener("submit", (event) => {
   onSave();
 });
 jumpForm.addEventListener("input", clearFeedback);
-boxInput.value = String(loadBoxHeightPref(localStorage));
+boxInput.value = String(loadBoxHeightPref(store));
 syncChips();
 boxInput.addEventListener("input", () => {
   const value = readBox();
-  if (value !== null) saveBoxHeightPref(localStorage, value);
+  if (value !== null) saveBoxHeightPref(store, value);
   syncChips();
   render();
 });
@@ -446,9 +502,9 @@ for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips butt
       boxInput.focus();
       boxInput.select();
     } else {
-      boxInput.value = chip.dataset.height ?? String(loadBoxHeightPref(localStorage));
+      boxInput.value = chip.dataset.height ?? String(loadBoxHeightPref(store));
       const value = readBox();
-      if (value !== null) saveBoxHeightPref(localStorage, value);
+      if (value !== null) saveBoxHeightPref(store, value);
     }
     render();
     syncChips();
@@ -459,14 +515,14 @@ for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips butt
 must<HTMLButtonElement>("#save-jump").addEventListener("click", onSave);
 chartMetric.addEventListener("change", renderHistory);
 chartJumpType.addEventListener("change", renderHistory);
-gctTargetInput.value = String(loadGctTargetMs(localStorage));
+gctTargetInput.value = String(loadGctTargetMs(store));
 gctTargetInput.addEventListener("change", () => {
   const value = Number(gctTargetInput.value);
   if (!Number.isFinite(value) || value <= 0) {
-    gctTargetInput.value = String(loadGctTargetMs(localStorage));
+    gctTargetInput.value = String(loadGctTargetMs(store));
     return;
   }
-  saveGctTargetMs(localStorage, value);
+  saveGctTargetMs(store, value);
   renderTrials();
 });
 boxTestAdd.addEventListener("click", () => {
@@ -495,10 +551,21 @@ boxTestSubmit.addEventListener("click", () => submitBoxTest());
 
 renderBoxTestRows();
 initMasterLogUi();
-const firstVisit = localStorage.getItem(VISITED_KEY) !== "1";
-showScreen(firstVisit ? "directions" : "analyze");
-renderTrials();
-render();
+updateProfileChrome();
+if (bootState.needsCreatePrompt || !activeProfile) {
+  profileCreatePrompt.hidden = false;
+  guide.hidden = true;
+  analyze.hidden = true;
+  screenBox.hidden = true;
+  screenMaster.hidden = true;
+  screenProfiles.hidden = true;
+} else {
+  profileCreatePrompt.hidden = true;
+  const firstVisit = store.getItem(VISITED_KEY) !== "1";
+  showScreen(firstVisit ? "directions" : "analyze");
+  renderTrials();
+  render();
+}
 
 /** Test/analyze hook: inject presentation timestamps after a clip is loaded. */
 (window as Window & { __jumpLabApplyPts?: (times: number[]) => void }).__jumpLabApplyPts = (
@@ -526,8 +593,9 @@ function initMasterLogUi(): void {
   must<HTMLButtonElement>("#master-export-xlsx").addEventListener("click", () => {
     void (async () => {
       try {
-        const trials = loadTrials(localStorage);
-        await downloadBlob(buildWorkbookBlob(trials), `jump-lab-${stamp()}.xlsx`);
+        const trials = loadTrials(store);
+        const who = (activeProfile?.name ?? "profile").replace(/[^\w.-]+/g, "_");
+        await downloadBlob(buildWorkbookBlob(trials), `jump-lab-${who}-${stamp()}.xlsx`);
         masterExportStatus.textContent = "Excel file ready — use Share / Save to Files on iPhone.";
       } catch (error) {
         masterExportStatus.textContent = error instanceof Error ? error.message : String(error);
@@ -537,22 +605,27 @@ function initMasterLogUi(): void {
   must<HTMLButtonElement>("#master-export-csv").addEventListener("click", () => {
     void (async () => {
       try {
-        const trials = loadTrials(localStorage);
+        const trials = loadTrials(store);
+        const who = (activeProfile?.name ?? "profile").replace(/[^\w.-]+/g, "_");
         const blob = new Blob([buildExportCsvText(trials)], { type: "text/csv;charset=utf-8" });
-        await downloadBlob(blob, `jump-lab-${stamp()}.csv`);
+        await downloadBlob(blob, `jump-lab-${who}-${stamp()}.csv`);
         masterExportStatus.textContent = "CSV ready (Drop jump + Depth jump) — Share / Save on iPhone.";
       } catch (error) {
         masterExportStatus.textContent = error instanceof Error ? error.message : String(error);
       }
     })();
   });
-  githubTokenInput.value = loadGithubToken(localStorage);
+  githubTokenInput.value = activeProfile?.allowGithub ? loadGithubToken(store) : "";
   must<HTMLButtonElement>("#github-token-save").addEventListener("click", () => {
-    if (!saveGithubToken(localStorage, githubTokenInput.value)) {
+    if (!activeProfile?.allowGithub) {
+      githubSyncStatus.textContent = "GitHub sync is only available on Byron’s profile.";
+      return;
+    }
+    if (!saveGithubToken(store, githubTokenInput.value)) {
       githubSyncStatus.textContent = "Could not save token.";
       return;
     }
-    githubTokenInput.value = loadGithubToken(localStorage);
+    githubTokenInput.value = loadGithubToken(store);
     githubSyncStatus.textContent = githubTokenInput.value
       ? "Token saved in this browser only. Syncing…"
       : "Token cleared.";
@@ -560,15 +633,23 @@ function initMasterLogUi(): void {
     if (githubTokenInput.value) void runGithubSync({ force: true });
   });
   must<HTMLButtonElement>("#github-sync-now").addEventListener("click", () => {
+    if (!activeProfile?.allowGithub) {
+      githubSyncStatus.textContent = "GitHub sync is only available on Byron’s profile.";
+      return;
+    }
     void runGithubSync({ force: true });
   });
   renderGithubSyncStatus();
-  if (loadGithubToken(localStorage)) void runGithubSync({ force: true });
+  if (activeProfile?.allowGithub && loadGithubToken(store)) void runGithubSync({ force: true });
 }
 
 function renderGithubSyncStatus(): void {
-  const meta = loadSyncMeta(localStorage);
-  const hasToken = Boolean(loadGithubToken(localStorage));
+  if (!activeProfile?.allowGithub) {
+    githubSyncStatus.textContent = "GitHub sync belongs to Byron’s profile only.";
+    return;
+  }
+  const meta = loadSyncMeta(store);
+  const hasToken = Boolean(loadGithubToken(store));
   const parts: string[] = [];
   if (!hasToken) parts.push("No token — add one so the jump log syncs to GitHub.");
   else if (meta.dirty) parts.push("Pending sync");
@@ -589,24 +670,33 @@ function renderGithubSyncStatus(): void {
  * Returns whether the GitHub write succeeded (no token → false / queued).
  */
 async function persistJumpLog(next: TrialRecord[]): Promise<boolean> {
-  if (!saveTrials(next, localStorage)) return false;
-  markDirty(localStorage);
-  renderGithubSyncStatus();
-  if (!loadGithubToken(localStorage)) return false;
-  return runGithubSync({ force: true });
+  if (!saveTrials(next, store)) return false;
+  if (activeProfile?.allowGithub) {
+    markDirty(store);
+    renderGithubSyncStatus();
+    if (!loadGithubToken(store)) return false;
+    return runGithubSync({ force: true });
+  }
+  return false;
 }
 
 async function runGithubSync(options: { force: boolean }): Promise<boolean> {
+  if (!activeProfile?.allowGithub) {
+    if (options.force) {
+      githubSyncStatus.textContent = "GitHub sync is only available on Byron’s profile.";
+    }
+    return false;
+  }
   if (githubSyncBusy) {
     githubSyncAgain = true;
     return false;
   }
-  const token = loadGithubToken(localStorage);
+  const token = loadGithubToken(store);
   if (!token) {
     if (options.force) githubSyncStatus.textContent = "Add a GitHub token first.";
     return false;
   }
-  const meta = loadSyncMeta(localStorage);
+  const meta = loadSyncMeta(store);
   if (!options.force && !meta.dirty) return true;
 
   githubSyncBusy = true;
@@ -617,19 +707,19 @@ async function runGithubSync(options: { force: boolean }): Promise<boolean> {
       githubSyncAgain = false;
       const result = await syncGithubLog({
         token,
-        getLocalTrials: () => loadTrials(localStorage),
-        storage: localStorage,
+        getLocalTrials: () => loadTrials(store),
+        storage: store,
       });
       if (result.error) {
-        markDirty(localStorage);
+        markDirty(store);
         renderGithubSyncStatus();
         ok = false;
         break;
       }
-      saveTrials(result.merged, localStorage);
+      saveTrials(result.merged, store);
       renderTrials();
-      if (result.needsRepush || loadSyncMeta(localStorage).dirty || githubSyncAgain) {
-        markDirty(localStorage);
+      if (result.needsRepush || loadSyncMeta(store).dirty || githubSyncAgain) {
+        markDirty(store);
         githubSyncAgain = true;
         continue;
       }
@@ -650,7 +740,7 @@ function stamp(): string {
 }
 
 function renderMasterLog(): void {
-  const trials = loadTrials(localStorage);
+  const trials = loadTrials(store);
   const rows = sortMasterRows(trials.map(trialToViewRow), masterSortKey, masterSortAsc);
   masterEmpty.hidden = rows.length > 0;
   masterBody.replaceChildren();
@@ -687,7 +777,7 @@ function renderMasterLog(): void {
     del.textContent = "Delete";
     del.addEventListener("click", () => {
       if (!confirm("Delete this jump from the log?")) return;
-      const next = loadTrials(localStorage).filter((trial) => trial.id !== row.id);
+      const next = loadTrials(store).filter((trial) => trial.id !== row.id);
       void persistJumpLog(next).then(() => renderTrials());
     });
     actions.append(edit, del);
@@ -697,7 +787,7 @@ function renderMasterLog(): void {
 }
 
 function editMasterTrial(id: string): void {
-  const trials = loadTrials(localStorage);
+  const trials = loadTrials(store);
   const trial = trials.find((entry) => entry.id === id);
   if (!trial) return;
   const jumpTypeRaw = prompt("Jump type (drop or depth)", trial.jumpType);
@@ -898,23 +988,23 @@ function submitBoxTest(): void {
     boxTestStatus.textContent = "Could not save enough jumps from this test.";
     return;
   }
-  const existing = loadTrials(localStorage);
+  const existing = loadTrials(store);
   void (async () => {
     const synced = await persistJumpLog([...created, ...existing]);
-    if (!loadTrials(localStorage).some((t) => created.some((c) => c.id === t.id))) {
+    if (!loadTrials(store).some((t) => created.some((c) => c.id === t.id))) {
       boxTestStatus.textContent = "Could not save the jump log.";
       return;
     }
     const summaries = summariesFromRowResults(rows);
-    const rec = recommendBoxHeight(summaries, loadGctTargetMs(localStorage), DEFAULT_CV);
+    const rec = recommendBoxHeight(summaries, loadGctTargetMs(store), DEFAULT_CV);
     if (!rec) {
       boxTestResult.hidden = false;
       boxTestResult.textContent = "Not enough data to recommend.";
       return;
     }
-    saveWorkingBox(localStorage, jumpType, rec.recommendedBoxIn);
+    saveWorkingBox(store, jumpType, rec.recommendedBoxIn);
     boxInput.value = String(rec.recommendedBoxIn);
-    saveBoxHeightPref(localStorage, rec.recommendedBoxIn);
+    saveBoxHeightPref(store, rec.recommendedBoxIn);
     syncChips();
     boxTestResult.hidden = false;
     boxTestResult.textContent = rec.message;
@@ -932,15 +1022,133 @@ function showScreen(screen: AppScreen): void {
   screenBox.hidden = screen !== "box";
   analyze.hidden = screen !== "analyze";
   screenMaster.hidden = screen !== "master";
+  screenProfiles.hidden = screen !== "profiles";
   if (screen === "master") renderMasterLog();
-  if (screen !== "directions") {
+  if (screen === "profiles") renderProfilesUi();
+  if (screen !== "directions" && activeProfile) {
     try {
-      localStorage.setItem(VISITED_KEY, "1");
+      store.setItem(VISITED_KEY, "1");
     } catch {
       // ignore
     }
   }
   window.scrollTo(0, 0);
+}
+
+function updateProfileChrome(): void {
+  const name = activeProfile?.name ?? "—";
+  profileActiveLabel.textContent = `Profile: ${name}`;
+  profileEyebrow.textContent = name;
+  const githubBlock = document.querySelector<HTMLElement>(".master-sync");
+  if (githubBlock) githubBlock.hidden = !activeProfile?.allowGithub;
+}
+
+function bindActiveStore(profile: Profile): void {
+  activeProfile = profile;
+  store = createProfileStore(rootStorage, profile.id);
+  jumpCountChoice = loadJumpCountPref(store);
+  syncJumpCountChips();
+  chartMode = loadChartModePref(store);
+  syncChartModeChips();
+  boxInput.value = String(loadBoxHeightPref(store));
+  syncChips();
+  gctTargetInput.value = String(loadGctTargetMs(store));
+  githubTokenInput.value = activeProfile.allowGithub ? loadGithubToken(store) : "";
+  updateProfileChrome();
+  renderTrials();
+  renderHistory();
+  renderMasterLog();
+  renderBoxTestRows();
+  renderGithubSyncStatus();
+}
+
+function renderProfilesUi(): void {
+  const list = must<HTMLElement>("#profiles-list");
+  const status = must<HTMLElement>("#profiles-status");
+  status.textContent = "";
+  list.replaceChildren();
+  for (const profile of loadProfiles(rootStorage)) {
+    const li = document.createElement("li");
+    li.className = "profile-row";
+    const title = document.createElement("p");
+    title.className = "profile-row-title";
+    title.textContent =
+      profile.name +
+      (profile.id === activeProfile?.id ? " (active)" : "") +
+      (profile.allowGithub ? " · GitHub" : "");
+    const actions = document.createElement("div");
+    actions.className = "profile-row-actions";
+    if (profile.id !== activeProfile?.id) {
+      const use = document.createElement("button");
+      use.type = "button";
+      use.textContent = "Switch";
+      use.addEventListener("click", () => {
+        try {
+          bindActiveStore(switchProfile(rootStorage, profile.id));
+          status.textContent = `Switched to ${profile.name}.`;
+          renderProfilesUi();
+        } catch (error) {
+          status.textContent = error instanceof Error ? error.message : String(error);
+        }
+      });
+      actions.append(use);
+    }
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "text-button";
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", () => {
+      const next = prompt("Rename profile", profile.name);
+      if (next === null) return;
+      try {
+        const updated = renameProfile(rootStorage, profile.id, next);
+        if (activeProfile?.id === updated.id) {
+          activeProfile = updated;
+          updateProfileChrome();
+        }
+        status.textContent = `Renamed to ${updated.name}.`;
+        renderProfilesUi();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : String(error);
+      }
+    });
+    actions.append(renameBtn);
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "text-button";
+    del.textContent = "Delete";
+    del.addEventListener("click", () => {
+      if (
+        !confirm(
+          `Delete profile “${profile.name}” and all its jumps on this device? This cannot be undone.`,
+        )
+      ) {
+        return;
+      }
+      try {
+        const state = deleteProfile(rootStorage, profile.id);
+        const next = getActiveProfile(rootStorage);
+        if (!next) throw new Error("No profile left.");
+        bindActiveStore(next);
+        status.textContent = `Deleted ${profile.name}. Active: ${next.name}.`;
+        renderProfilesUi();
+        void state;
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : String(error);
+      }
+    });
+    actions.append(del);
+    li.append(title, actions);
+    list.append(li);
+  }
+}
+
+function finishFirstProfile(name: string): void {
+  const profile = createProfile(rootStorage, name, { allowGithub: false });
+  bindActiveStore(profile);
+  profileCreatePrompt.hidden = true;
+  const firstVisit = store.getItem(VISITED_KEY) !== "1";
+  showScreen(firstVisit ? "directions" : "analyze");
 }
 
 function closeMenu(): void {
@@ -1359,7 +1567,7 @@ async function saveMultiJumpSet(): Promise<void> {
     multiJumpStatus.textContent = "Could not build trials from marks.";
     return;
   }
-  const existing = loadTrials(localStorage);
+  const existing = loadTrials(store);
   const synced = await persistJumpLog([...created, ...existing]);
   multiJumpStatus.textContent = synced
     ? `Saved ${created.length} jumps to your jump log (${setId}).`
@@ -1545,7 +1753,7 @@ function onSave(): void {
     return;
   }
 
-  const trials = loadTrials(localStorage);
+  const trials = loadTrials(store);
   marks.stepOff = null;
   marks.touchdown = null;
   marks.takeoff = null;
@@ -1556,7 +1764,7 @@ function onSave(): void {
   render();
   void (async () => {
     const synced = await persistJumpLog([trial, ...trials]);
-    if (!loadTrials(localStorage).some((t) => t.id === trial.id)) {
+    if (!loadTrials(store).some((t) => t.id === trial.id)) {
       formError.hidden = false;
       formError.textContent = "Could not save the jump log. Storage may be blocked.";
       saveStatus.textContent = "";
@@ -1569,7 +1777,7 @@ function onSave(): void {
 }
 
 function renderTrials(): void {
-  const trials = loadTrials(localStorage);
+  const trials = loadTrials(store);
   if (pendingDeleteId && !trials.some((trial) => trial.id === pendingDeleteId)) {
     pendingDeleteId = null;
   }
@@ -1598,10 +1806,10 @@ function renderSession(trials: TrialRecord[]): void {
   sessionEmpty.hidden = groups.length > 0;
   sessionEmpty.textContent = "No jumps saved today yet.";
   sessionList.replaceChildren();
-  const rebaseline = loadRebaselineWeeks(localStorage);
+  const rebaseline = loadRebaselineWeeks(store);
   const today = trialDay(new Date().toISOString());
   const thisWeek = weekKey(today);
-  const gctTarget = loadGctTargetMs(localStorage);
+  const gctTarget = loadGctTargetMs(store);
   gctTargetInput.value = String(gctTarget);
 
   const retest = needsProfileRetest(trials, today);
@@ -1646,7 +1854,7 @@ function renderSession(trials: TrialRecord[]): void {
     rebase.className = "text-button rebaseline";
     rebase.textContent = "Re-baseline from this week";
     rebase.addEventListener("click", () => {
-      setRebaselineWeek(localStorage, group.jumpType, group.boxHeightIn, thisWeek);
+      setRebaselineWeek(store, group.jumpType, group.boxHeightIn, thisWeek);
       renderTrials();
     });
     item.append(rebase);
@@ -1686,7 +1894,7 @@ function renderBaselineMetric(metric: MetricBaseline): HTMLParagraphElement {
 }
 
 function renderHistory(): void {
-  const trials = loadTrials(localStorage);
+  const trials = loadTrials(store);
   const metric = chartMetric.value as SessionMetric;
   const typeValue = chartJumpType.value;
   const jumpType = typeValue === "all" ? undefined : (typeValue as JumpType);
@@ -1774,7 +1982,7 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
       return;
     }
     pendingDeleteId = null;
-    const next = loadTrials(localStorage).filter((entry) => entry.id !== trial.id);
+    const next = loadTrials(store).filter((entry) => entry.id !== trial.id);
     void persistJumpLog(next).then(() => renderTrials());
   });
   item.append(button);

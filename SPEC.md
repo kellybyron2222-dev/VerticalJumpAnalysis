@@ -30,6 +30,13 @@ iPhone slo-mo clips picked from the camera roll often arrive stretched in time: 
 - The UI says "jump", never "trial". Code identifiers may keep `trial`.
 - Readout labels: "Jump height (in)", "Contact time (ms)", "Flight time (ms)", "RSI". RSI is shown as a unitless ratio. The Excel export (Milestone 5) keeps "RSI (m/s)".
 
+## Profiles (local)
+
+- Local-only profile switcher (name, create, rename, switch, delete with confirm) in the menu. Active profile name is shown on every screen.
+- Each profile has its own saved jumps, settings (baseline, box height, jumps-in-clip, chart mode, GCT target, working box), and master log — namespaced in `localStorage` under that profile id.
+- Existing pre-profile data migrates into a default profile named **Byron** without loss. GitHub token/sync stay bound to Byron’s profile only (`allowGithub`). A new profile starts empty and cannot use GitHub sync.
+- First-time visitors with no data see **Create your profile**. Each profile exports its own CSV/xlsx. Unit tests cover namespacing, migration, and isolation from Byron’s data/GitHub log.
+
 ## Constraints
 
 - Static and client-side only. No backend, no account system, no server-side video processing.
