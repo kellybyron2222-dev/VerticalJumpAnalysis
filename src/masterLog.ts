@@ -242,33 +242,74 @@ export function isShareAbort(error: unknown): boolean {
   return false;
 }
 
-/** iOS-friendly download: Web Share with File when possible, else anchor download. */
+/** True when share() was blocked (often expired user gesture after long work). */
+export function isShareNotAllowed(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "NotAllowedError") return true;
+  if (error instanceof Error && error.name === "NotAllowedError") return true;
+  return false;
+}
+
+/** Whether this file can be passed to navigator.share({ files }). */
+export function canShareFiles(file: File): boolean {
+  try {
+    if (typeof navigator.share !== "function") return false;
+    if (typeof navigator.canShare !== "function") return false;
+    return navigator.canShare({ files: [file] });
+  } catch {
+    return false;
+  }
+}
+
+export type ShareFromGestureResult = "shared" | "aborted" | "unavailable" | "not-allowed";
+
+/**
+ * Call only from a click/tap handler (fresh user gesture).
+ * Safari requires transient activation for navigator.share({ files }).
+ */
+export async function shareFileFromGesture(file: File): Promise<ShareFromGestureResult> {
+  if (!canShareFiles(file) || typeof navigator.share !== "function") return "unavailable";
+  try {
+    await navigator.share({ files: [file], title: file.name });
+    return "shared";
+  } catch (error) {
+    if (isShareAbort(error)) return "aborted";
+    if (isShareNotAllowed(error)) return "not-allowed";
+    throw error;
+  }
+}
+
+/** Trigger a blob download via a temporary object URL (does not revoke — caller owns URL). */
+export function bindDownloadLink(
+  anchor: HTMLAnchorElement,
+  url: string,
+  filename: string,
+): void {
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = "noopener";
+}
+
+/** Click-download a blob (short-lived URL). Used when share is unavailable. */
+export function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  bindDownloadLink(anchor, url, filename);
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/**
+ * Immediate download helper for exports that still run inside a click (CSV/XLSX).
+ * Tries share first; on NotAllowedError falls back to download; AbortError is silent.
+ */
 export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
   const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
-  const nav = navigator as Navigator & {
-    canShare?: (data?: ShareData) => boolean;
-    share?: (data: ShareData) => Promise<void>;
-  };
-  if (nav.share && nav.canShare?.({ files: [file] })) {
-    try {
-      await nav.share({ files: [file], title: filename });
-    } catch (error) {
-      // Cancelling the share sheet is not an error — stay silent.
-      if (isShareAbort(error)) return;
-      throw error;
-    }
-    return;
+  if (canShareFiles(file)) {
+    const result = await shareFileFromGesture(file);
+    if (result === "shared" || result === "aborted") return;
+    // not-allowed / unavailable → download below
   }
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.rel = "noopener";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
+  triggerBlobDownload(blob, filename);
 }

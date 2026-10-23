@@ -380,8 +380,8 @@ export function composeJumpCardPng(
 }
 
 /** Prefer mp4 for iPhone Share/Save; fall back to webm. */
-export function pickRecorderMime(): { mimeType: string; ext: string } {
-  const candidates = [
+export function pickRecorderMime(): { mimeType: string; ext: "mp4" | "webm" } {
+  const candidates: { mimeType: string; ext: "mp4" | "webm" }[] = [
     { mimeType: "video/mp4", ext: "mp4" },
     { mimeType: "video/mp4;codecs=avc1.42E01E,mp4a.40.2", ext: "mp4" },
     { mimeType: "video/webm;codecs=vp9,opus", ext: "webm" },
@@ -394,6 +394,14 @@ export function pickRecorderMime(): { mimeType: string; ext: string } {
     }
   }
   return { mimeType: "", ext: "webm" };
+}
+
+/** Short note for the export-ready panel about recorded container. */
+export function recorderFormatNote(ext: string, recordedMime = ""): string {
+  const isMp4 = ext === "mp4" || recordedMime.includes("mp4");
+  return isMp4
+    ? "Recorded as MP4."
+    : "Recorded as WebM (MP4 wasn’t supported on this device).";
 }
 
 export function exportVideoFrameRange(

@@ -31,6 +31,7 @@ import {
   exportVideoFrameRange,
   parseExportPlaybackSpeed,
   pickRecorderMime,
+  recorderFormatNote,
   type ExportPlaybackSpeed,
   type JumpOverlayModel,
 } from "./jumpOverlay.ts";
@@ -115,9 +116,13 @@ import {
 import {
   buildExportCsvText,
   buildWorkbookBlob,
+  bindDownloadLink,
+  canShareFiles,
   downloadBlob,
   isShareAbort,
+  shareFileFromGesture,
   sortMasterRows,
+  triggerBlobDownload,
   trialToViewRow,
   type MasterSortKey,
 } from "./masterLog.ts";
@@ -181,6 +186,21 @@ const exportJumpVideoBtn = must<HTMLButtonElement>("#export-jump-video");
 const exportSpeedChips = must<HTMLElement>("#export-speed-chips");
 let exportPlaybackSpeed: ExportPlaybackSpeed = 0.25;
 const overlayStatus = must<HTMLElement>("#overlay-status");
+const exportReadyPanel = must<HTMLElement>("#export-ready");
+const exportReadyNote = must<HTMLElement>("#export-ready-note");
+const exportReadyVideo = must<HTMLVideoElement>("#export-ready-video");
+const exportReadyImage = must<HTMLImageElement>("#export-ready-image");
+const exportReadyShareBtn = must<HTMLButtonElement>("#export-ready-share");
+const exportReadyDownload = must<HTMLAnchorElement>("#export-ready-download");
+const exportReadyHint = must<HTMLElement>("#export-ready-hint");
+type ExportReadyKind = "video" | "image";
+let exportReady: {
+  blob: Blob;
+  file: File;
+  filename: string;
+  kind: ExportReadyKind;
+  url: string;
+} | null = null;
 const emptyVideo = must<HTMLElement>("#empty-video");
 const player = must<HTMLElement>("#player");
 let poseSamples: FootSample[] = [];
@@ -1904,6 +1924,82 @@ exportSpeedChips.addEventListener("click", (event) => {
 });
 window.addEventListener("resize", () => paintJumpOverlay());
 
+function clearExportReady(): void {
+  if (exportReady?.url) URL.revokeObjectURL(exportReady.url);
+  exportReady = null;
+  exportReadyPanel.hidden = true;
+  exportReadyVideo.hidden = true;
+  exportReadyImage.hidden = true;
+  exportReadyVideo.removeAttribute("src");
+  exportReadyVideo.load();
+  exportReadyImage.removeAttribute("src");
+  exportReadyNote.textContent = "";
+  exportReadyHint.textContent = "";
+  exportReadyShareBtn.textContent = "Save / Share";
+}
+
+function presentExportReady(
+  blob: Blob,
+  filename: string,
+  kind: ExportReadyKind,
+  note: string,
+): void {
+  clearExportReady();
+  const type = blob.type || (kind === "video" ? "video/mp4" : "image/png");
+  const file = new File([blob], filename, { type });
+  const url = URL.createObjectURL(blob);
+  exportReady = { blob, file, filename, kind, url };
+  exportReadyPanel.hidden = false;
+  exportReadyNote.textContent = note;
+  bindDownloadLink(exportReadyDownload, url, filename);
+  exportReadyShareBtn.textContent =
+    kind === "video" ? "Save / Share video" : "Save / Share jump card";
+  exportReadyShareBtn.hidden = !canShareFiles(file);
+  if (kind === "video") {
+    exportReadyVideo.hidden = false;
+    exportReadyVideo.src = url;
+    exportReadyHint.textContent = canShareFiles(file)
+      ? "Tap Save / Share, or use Download / long-press the preview to save."
+      : "Use Download, or long-press the preview to save to Photos/Files.";
+  } else {
+    exportReadyImage.hidden = false;
+    exportReadyImage.src = url;
+    exportReadyHint.textContent = canShareFiles(file)
+      ? "Tap Save / Share, or use Download."
+      : "Use Download to save the PNG.";
+  }
+}
+
+exportReadyShareBtn.addEventListener("click", () => {
+  void (async () => {
+    if (!exportReady) return;
+    try {
+      const result = await shareFileFromGesture(exportReady.file);
+      if (result === "aborted") {
+        exportReadyHint.textContent = "";
+        return;
+      }
+      if (result === "shared") {
+        exportReadyHint.textContent = "Shared.";
+        return;
+      }
+      if (result === "not-allowed" || result === "unavailable") {
+        triggerBlobDownload(exportReady.blob, exportReady.filename);
+        exportReadyHint.textContent =
+          result === "not-allowed"
+            ? "Share wasn’t allowed — use Download or long-press the preview to save."
+            : "Share isn’t available — use Download or long-press the preview to save.";
+      }
+    } catch (error) {
+      if (isShareAbort(error)) {
+        exportReadyHint.textContent = "";
+        return;
+      }
+      exportReadyHint.textContent = error instanceof Error ? error.message : String(error);
+    }
+  })();
+});
+
 async function exportJumpCard(): Promise<void> {
   if (!jumpOverlay || !ready) {
     overlayStatus.textContent = "Run auto-detect first so the foot path is available.";
@@ -1947,14 +2043,11 @@ async function exportJumpCard(): Promise<void> {
     });
     if (!blob) throw new Error("Could not build PNG.");
     const who = (activeProfile?.name ?? "jump").replace(/[^\w.-]+/g, "_");
-    await downloadBlob(blob, `jump-card-${who}-${stamp()}.png`);
-    overlayStatus.textContent = "Jump card ready — Share / Save to Files.";
+    const filename = `jump-card-${who}-${stamp()}.png`;
+    presentExportReady(blob, filename, "image", "Jump card ready.");
+    overlayStatus.textContent = "";
     render();
   } catch (error) {
-    if (isShareAbort(error)) {
-      overlayStatus.textContent = "";
-      return;
-    }
     overlayStatus.textContent = error instanceof Error ? error.message : String(error);
   } finally {
     exportJumpCardBtn.disabled = !jumpOverlay;
@@ -2080,11 +2173,19 @@ async function exportJumpVideo(): Promise<void> {
     await sleepMs(1600);
     recorder.stop();
     await stopped;
-    const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "video/webm" });
+    const recordedType = recorder.mimeType || mimeType || "video/webm";
+    const blob = new Blob(chunks, { type: recordedType });
     if (!blob.size) throw new Error("Recording produced an empty file.");
     const who = (activeProfile?.name ?? "jump").replace(/[^\w.-]+/g, "_");
-    await downloadBlob(blob, `jump-video-${who}-${stamp()}.${ext}`);
-    overlayStatus.textContent = "Video ready — Share / Save to Files.";
+    const usedExt = recordedType.includes("mp4") ? "mp4" : ext || "webm";
+    const filename = `jump-video-${who}-${stamp()}.${usedExt}`;
+    presentExportReady(
+      blob,
+      filename,
+      "video",
+      `Video ready. ${recorderFormatNote(usedExt, recordedType)} Tap Save / Share below (needs a fresh tap after recording).`,
+    );
+    overlayStatus.textContent = "";
     render();
   } catch (error) {
     if (recorder.state !== "inactive") {
@@ -2093,10 +2194,6 @@ async function exportJumpVideo(): Promise<void> {
       } catch {
         /* ignore */
       }
-    }
-    if (isShareAbort(error)) {
-      overlayStatus.textContent = "";
-      return;
     }
     overlayStatus.textContent = error instanceof Error ? error.message : String(error);
   } finally {

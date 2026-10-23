@@ -349,6 +349,39 @@ h3 {
   margin: 0;
 }
 
+.export-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  padding: 0.65rem 0 0;
+  border-top: 1px solid #e2dccf;
+}
+
+.export-ready[hidden] {
+  display: none;
+}
+
+.export-ready-media {
+  display: block;
+  width: 100%;
+  max-height: 40dvh;
+  background: #14120e;
+  border-radius: 0;
+}
+
+.export-ready-media[hidden] {
+  display: none;
+}
+
+a.export-ready-download {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
 video {
   display: block;
   width: 100%;

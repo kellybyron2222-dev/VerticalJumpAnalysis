@@ -8,6 +8,7 @@ import {
   buildWorkbookBlob,
   isoWeek,
   isShareAbort,
+  isShareNotAllowed,
   masterRowsFromTrials,
   sortMasterRows,
   trialToMasterRow,
@@ -122,5 +123,17 @@ describe("master log row mapping", () => {
       true,
     );
     expect(isShareAbort(new Error("network"))).toBe(false);
+  });
+
+  it("detects NotAllowedError from expired share gestures", () => {
+    expect(
+      isShareNotAllowed(
+        new DOMException(
+          "The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.",
+          "NotAllowedError",
+        ),
+      ),
+    ).toBe(true);
+    expect(isShareNotAllowed(new Error("nope"))).toBe(false);
   });
 });

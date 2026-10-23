@@ -12,6 +12,7 @@ import {
   heelTrailThrough,
   parseExportPlaybackSpeed,
   pickRecorderMime,
+  recorderFormatNote,
 } from "./jumpOverlay.ts";
 
 function samples(): FootSample[] {
@@ -91,5 +92,7 @@ describe("jump video export helpers", () => {
   it("pickRecorderMime returns a usable shape", () => {
     const picked = pickRecorderMime();
     expect(picked.ext === "mp4" || picked.ext === "webm").toBe(true);
+    expect(recorderFormatNote("mp4")).toMatch(/MP4/i);
+    expect(recorderFormatNote("webm")).toMatch(/WebM/i);
   });
 });
