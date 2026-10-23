@@ -308,11 +308,24 @@
           <div id="overlay-tools" class="overlay-tools" hidden>
             <label class="high-accuracy" for="show-foot-path">
               <input type="checkbox" id="show-foot-path" checked />
-              <span>Show foot path &amp; apex height tag</span>
+              <span>Show foot path &amp; jump height</span>
             </label>
-            <button type="button" id="export-jump-card" class="button-secondary">
-              Export jump card
-            </button>
+            <div class="export-row">
+              <button type="button" id="export-jump-card" class="button-secondary">
+                Export jump card
+              </button>
+              <button type="button" id="export-jump-video" class="button-secondary">
+                Export video
+              </button>
+            </div>
+            <div class="export-speed" id="export-speed">
+              <span class="detail">Export speed</span>
+              <div class="chips" id="export-speed-chips">
+                <button type="button" data-speed="1">1×</button>
+                <button type="button" data-speed="0.5">0.5×</button>
+                <button type="button" data-speed="0.25" aria-pressed="true">0.25×</button>
+              </div>
+            </div>
             <p id="overlay-status" class="detail" role="status"></p>
           </div>
 

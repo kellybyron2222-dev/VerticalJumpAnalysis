@@ -235,6 +235,13 @@ function csvEscape(value: string | number): string {
   return text;
 }
 
+/** True when the user dismissed the iOS/share sheet (not a failure). */
+export function isShareAbort(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error && error.name === "AbortError") return true;
+  return false;
+}
+
 /** iOS-friendly download: Web Share with File when possible, else anchor download. */
 export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
   const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
@@ -243,7 +250,13 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<void> 
     share?: (data: ShareData) => Promise<void>;
   };
   if (nav.share && nav.canShare?.({ files: [file] })) {
-    await nav.share({ files: [file], title: filename });
+    try {
+      await nav.share({ files: [file], title: filename });
+    } catch (error) {
+      // Cancelling the share sheet is not an error — stay silent.
+      if (isShareAbort(error)) return;
+      throw error;
+    }
     return;
   }
   const url = URL.createObjectURL(blob);

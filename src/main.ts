@@ -26,6 +26,12 @@ import {
   buildJumpOverlayModel,
   composeJumpCardPng,
   drawFootOverlay,
+  drawMetricsStrip,
+  exportFrameHoldMs,
+  exportVideoFrameRange,
+  parseExportPlaybackSpeed,
+  pickRecorderMime,
+  type ExportPlaybackSpeed,
   type JumpOverlayModel,
 } from "./jumpOverlay.ts";
 import {
@@ -110,6 +116,7 @@ import {
   buildExportCsvText,
   buildWorkbookBlob,
   downloadBlob,
+  isShareAbort,
   sortMasterRows,
   trialToViewRow,
   type MasterSortKey,
@@ -170,6 +177,9 @@ const jumpOverlayCanvas = must<HTMLCanvasElement>("#jump-overlay");
 const overlayTools = must<HTMLElement>("#overlay-tools");
 const showFootPath = must<HTMLInputElement>("#show-foot-path");
 const exportJumpCardBtn = must<HTMLButtonElement>("#export-jump-card");
+const exportJumpVideoBtn = must<HTMLButtonElement>("#export-jump-video");
+const exportSpeedChips = must<HTMLElement>("#export-speed-chips");
+let exportPlaybackSpeed: ExportPlaybackSpeed = 0.25;
 const overlayStatus = must<HTMLElement>("#overlay-status");
 const emptyVideo = must<HTMLElement>("#empty-video");
 const player = must<HTMLElement>("#player");
@@ -1852,6 +1862,7 @@ function refreshJumpOverlay(): void {
   }
   overlayTools.hidden = !jumpOverlay;
   exportJumpCardBtn.disabled = !jumpOverlay;
+  exportJumpVideoBtn.disabled = !jumpOverlay;
   paintJumpOverlay();
 }
 
@@ -1879,6 +1890,17 @@ function paintJumpOverlay(): void {
 showFootPath.addEventListener("change", () => paintJumpOverlay());
 exportJumpCardBtn.addEventListener("click", () => {
   void exportJumpCard();
+});
+exportJumpVideoBtn.addEventListener("click", () => {
+  void exportJumpVideo();
+});
+exportSpeedChips.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button[data-speed]");
+  if (!button) return;
+  exportPlaybackSpeed = parseExportPlaybackSpeed(button.dataset.speed ?? "0.25");
+  for (const chip of exportSpeedChips.querySelectorAll("button")) {
+    chip.setAttribute("aria-pressed", chip === button ? "true" : "false");
+  }
 });
 window.addEventListener("resize", () => paintJumpOverlay());
 
@@ -1929,8 +1951,157 @@ async function exportJumpCard(): Promise<void> {
     overlayStatus.textContent = "Jump card ready — Share / Save to Files.";
     render();
   } catch (error) {
+    if (isShareAbort(error)) {
+      overlayStatus.textContent = "";
+      return;
+    }
     overlayStatus.textContent = error instanceof Error ? error.message : String(error);
   } finally {
+    exportJumpCardBtn.disabled = !jumpOverlay;
+  }
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function exportJumpVideo(): Promise<void> {
+  if (!jumpOverlay || !ready) {
+    overlayStatus.textContent = "Run auto-detect first so the foot path is available.";
+    return;
+  }
+  if (typeof MediaRecorder === "undefined" || typeof HTMLCanvasElement === "undefined") {
+    overlayStatus.textContent = "Video export needs MediaRecorder (use Safari on iPhone).";
+    return;
+  }
+  const stretch = activeStretch();
+  const fps = readFps();
+  if (fps === null) {
+    overlayStatus.textContent = "Need a measured frame rate before export.";
+    return;
+  }
+  const preview = previewMetrics({
+    touchdown: marks.touchdown,
+    takeoff: marks.takeoff,
+    landing: marks.landing,
+    fps,
+    slowMoFactor: stretch,
+    frameTimes: frameTimes ?? undefined,
+  });
+  if (
+    marks.takeoff === null ||
+    marks.landing === null ||
+    preview.heightIn === null ||
+    preview.gctMs === null ||
+    preview.rsi === null
+  ) {
+    overlayStatus.textContent = "Need contact, flight, and height marks before export.";
+    return;
+  }
+  const padFrames = Math.max(2, Math.round(fps * stretch * 0.12));
+  const { start, end } = exportVideoFrameRange(
+    marks.stepOff,
+    marks.takeoff,
+    marks.landing,
+    seeker.frameCount,
+    padFrames,
+  );
+  const model = { ...jumpOverlay, heightIn: preview.heightIn };
+  const metrics = {
+    heightIn: preview.heightIn,
+    gctMs: preview.gctMs,
+    rsi: preview.rsi,
+  };
+  const w = video.videoWidth || 720;
+  const h = video.videoHeight || 1280;
+  const stripH = Math.max(96, Math.round(w * 0.18));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h + stripH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    overlayStatus.textContent = "Canvas unavailable.";
+    return;
+  }
+  const capture =
+    typeof canvas.captureStream === "function" ? canvas.captureStream(30) : null;
+  if (!capture) {
+    overlayStatus.textContent = "captureStream is not available in this browser.";
+    return;
+  }
+  const { mimeType, ext } = pickRecorderMime();
+  let recorder: MediaRecorder;
+  try {
+    recorder = mimeType
+      ? new MediaRecorder(capture, { mimeType, videoBitsPerSecond: 6_000_000 })
+      : new MediaRecorder(capture, { videoBitsPerSecond: 6_000_000 });
+  } catch {
+    overlayStatus.textContent = "Could not start MediaRecorder on this device.";
+    return;
+  }
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (event) => {
+    if (event.data.size > 0) chunks.push(event.data);
+  };
+  const stopped = new Promise<void>((resolve, reject) => {
+    recorder.onstop = () => resolve();
+    recorder.onerror = () => reject(new Error("Recording failed."));
+  });
+
+  exportJumpVideoBtn.disabled = true;
+  exportJumpCardBtn.disabled = true;
+  overlayStatus.textContent = "Recording annotated video… 0%";
+  try {
+    recorder.start(200);
+    const total = Math.max(1, end - start + 1);
+    for (let f = start; f <= end; f += 1) {
+      await seeker.settle(f);
+      frame = f;
+      ctx.fillStyle = "#1c1914";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, w, h);
+      drawFootOverlay(ctx, w, h, model, { showTags: true, currentFrame: f });
+      const pct = Math.round(((f - start + 1) / total) * 90);
+      overlayStatus.textContent = `Recording annotated video… ${pct}%`;
+      const next = Math.min(f + 1, end);
+      const realDt =
+        f < end
+          ? realSecondsOnClock(frameTimes ?? undefined, f, next, fps, stretch)
+          : 1 / Math.max(1, fps);
+      await sleepMs(exportFrameHoldMs(realDt, exportPlaybackSpeed));
+    }
+    // End result strip held briefly so Share preview shows the numbers.
+    ctx.fillStyle = "#1c1914";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, w, h);
+    drawFootOverlay(ctx, w, h, model, { showTags: true, currentFrame: end });
+    drawMetricsStrip(ctx, 0, h, w, stripH, metrics);
+    overlayStatus.textContent = "Recording annotated video… 95%";
+    await sleepMs(1600);
+    recorder.stop();
+    await stopped;
+    const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || "video/webm" });
+    if (!blob.size) throw new Error("Recording produced an empty file.");
+    const who = (activeProfile?.name ?? "jump").replace(/[^\w.-]+/g, "_");
+    await downloadBlob(blob, `jump-video-${who}-${stamp()}.${ext}`);
+    overlayStatus.textContent = "Video ready — Share / Save to Files.";
+    render();
+  } catch (error) {
+    if (recorder.state !== "inactive") {
+      try {
+        recorder.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (isShareAbort(error)) {
+      overlayStatus.textContent = "";
+      return;
+    }
+    overlayStatus.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    for (const track of capture.getTracks()) track.stop();
+    exportJumpVideoBtn.disabled = !jumpOverlay;
     exportJumpCardBtn.disabled = !jumpOverlay;
   }
 }

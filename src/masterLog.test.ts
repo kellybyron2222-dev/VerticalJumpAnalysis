@@ -7,6 +7,7 @@ import {
   buildExportCsvText,
   buildWorkbookBlob,
   isoWeek,
+  isShareAbort,
   masterRowsFromTrials,
   sortMasterRows,
   trialToMasterRow,
@@ -111,5 +112,15 @@ describe("master log row mapping", () => {
       trialToViewRow(trial({ id: "b", jumpType: "drop", boxHeightIn: 6 })),
     ];
     expect(sortMasterRows(rows, "box", true).map((r) => r.box)).toEqual([6, 18]);
+  });
+
+  it("treats share-sheet cancel as AbortError, not a failure", () => {
+    expect(isShareAbort(new DOMException("Abort due to cancellation of share.", "AbortError"))).toBe(
+      true,
+    );
+    expect(isShareAbort(Object.assign(new Error("Abort due to cancellation of share."), { name: "AbortError" }))).toBe(
+      true,
+    );
+    expect(isShareAbort(new Error("network"))).toBe(false);
   });
 });
