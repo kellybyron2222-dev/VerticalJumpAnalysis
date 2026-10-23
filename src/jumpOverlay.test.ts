@@ -11,6 +11,7 @@ import {
   heelPathDuringFlight,
   heelTrailThrough,
   parseExportPlaybackSpeed,
+  exportReadyMediaVisibility,
   pickRecorderMime,
   recorderFormatNote,
 } from "./jumpOverlay.ts";
@@ -94,5 +95,10 @@ describe("jump video export helpers", () => {
     expect(picked.ext === "mp4" || picked.ext === "webm").toBe(true);
     expect(recorderFormatNote("mp4")).toMatch(/MP4/i);
     expect(recorderFormatNote("webm")).toMatch(/WebM/i);
+  });
+
+  it("shows only one export preview at a time (card XOR video)", () => {
+    expect(exportReadyMediaVisibility("image")).toEqual({ showVideo: false, showImage: true });
+    expect(exportReadyMediaVisibility("video")).toEqual({ showVideo: true, showImage: false });
   });
 });

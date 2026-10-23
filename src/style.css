@@ -362,15 +362,28 @@ h3 {
   display: none;
 }
 
+/* Natural aspect — do not squash; saved blob is unchanged. */
 .export-ready-media {
   display: block;
   width: 100%;
-  max-height: 40dvh;
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  object-position: center top;
   background: #14120e;
   border-radius: 0;
 }
 
 .export-ready-media[hidden] {
+  display: none !important;
+}
+
+/* Beat the global `video { display:block }` rule when this preview is hidden. */
+#export-ready-video[hidden] {
+  display: none !important;
+}
+
+.stage[data-export-preview="1"] {
   display: none;
 }
 

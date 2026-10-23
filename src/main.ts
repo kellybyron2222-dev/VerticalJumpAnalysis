@@ -30,6 +30,7 @@ import {
   exportFrameHoldMs,
   exportVideoFrameRange,
   parseExportPlaybackSpeed,
+  exportReadyMediaVisibility,
   pickRecorderMime,
   recorderFormatNote,
   type ExportPlaybackSpeed,
@@ -192,6 +193,7 @@ const exportReadyVideo = must<HTMLVideoElement>("#export-ready-video");
 const exportReadyImage = must<HTMLImageElement>("#export-ready-image");
 const exportReadyShareBtn = must<HTMLButtonElement>("#export-ready-share");
 const exportReadyDownload = must<HTMLAnchorElement>("#export-ready-download");
+const exportReadyDoneBtn = must<HTMLButtonElement>("#export-ready-done");
 const exportReadyHint = must<HTMLElement>("#export-ready-hint");
 type ExportReadyKind = "video" | "image";
 let exportReady: {
@@ -1924,6 +1926,14 @@ exportSpeedChips.addEventListener("click", (event) => {
 });
 window.addEventListener("resize", () => paintJumpOverlay());
 
+const analyzeStage = document.querySelector<HTMLElement>("#player .stage");
+
+function setStageHiddenForExportPreview(hidden: boolean): void {
+  if (!analyzeStage) return;
+  if (hidden) analyzeStage.dataset.exportPreview = "1";
+  else delete analyzeStage.dataset.exportPreview;
+}
+
 function clearExportReady(): void {
   if (exportReady?.url) URL.revokeObjectURL(exportReady.url);
   exportReady = null;
@@ -1936,6 +1946,7 @@ function clearExportReady(): void {
   exportReadyNote.textContent = "";
   exportReadyHint.textContent = "";
   exportReadyShareBtn.textContent = "Save / Share";
+  setStageHiddenForExportPreview(false);
 }
 
 function presentExportReady(
@@ -1955,14 +1966,17 @@ function presentExportReady(
   exportReadyShareBtn.textContent =
     kind === "video" ? "Save / Share video" : "Save / Share jump card";
   exportReadyShareBtn.hidden = !canShareFiles(file);
-  if (kind === "video") {
-    exportReadyVideo.hidden = false;
+  const media = exportReadyMediaVisibility(kind);
+  exportReadyVideo.hidden = !media.showVideo;
+  exportReadyImage.hidden = !media.showImage;
+  // Hide the live stage so only this one export preview is on screen.
+  setStageHiddenForExportPreview(true);
+  if (media.showVideo) {
     exportReadyVideo.src = url;
     exportReadyHint.textContent = canShareFiles(file)
       ? "Tap Save / Share, or use Download / long-press the preview to save."
       : "Use Download, or long-press the preview to save to Photos/Files.";
   } else {
-    exportReadyImage.hidden = false;
     exportReadyImage.src = url;
     exportReadyHint.textContent = canShareFiles(file)
       ? "Tap Save / Share, or use Download."
@@ -1998,6 +2012,10 @@ exportReadyShareBtn.addEventListener("click", () => {
       exportReadyHint.textContent = error instanceof Error ? error.message : String(error);
     }
   })();
+});
+exportReadyDoneBtn.addEventListener("click", () => {
+  clearExportReady();
+  paintJumpOverlay();
 });
 
 async function exportJumpCard(): Promise<void> {

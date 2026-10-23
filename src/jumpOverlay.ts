@@ -404,6 +404,16 @@ export function recorderFormatNote(ext: string, recordedMime = ""): string {
     : "Recorded as WebM (MP4 wasn’t supported on this device).";
 }
 
+/** Which preview media to show after export — never both (card XOR video). */
+export function exportReadyMediaVisibility(kind: "video" | "image"): {
+  showVideo: boolean;
+  showImage: boolean;
+} {
+  return kind === "video"
+    ? { showVideo: true, showImage: false }
+    : { showVideo: false, showImage: true };
+}
+
 export function exportVideoFrameRange(
   stepOff: number | null,
   takeoff: number,
