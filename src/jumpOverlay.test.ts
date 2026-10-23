@@ -7,19 +7,25 @@ import {
   exportFrameHoldMs,
   exportVideoFrameRange,
   findFlightApex,
+  floorLevelNearTakeoff,
   footPathDuringFlight,
+  heelPathDuringFlight,
   parseExportPlaybackSpeed,
   pickRecorderMime,
 } from "./jumpOverlay.ts";
 
 function samples(): FootSample[] {
   const out: FootSample[] = [];
-  // Takeoff 10 → apex ~25 (high in frame = low Y) → landing 40
-  for (let frame = 10; frame <= 40; frame += 1) {
+  // Standing/floor at 0.9, takeoff 10 → heel apex ~25 → landing 40
+  for (let frame = 4; frame <= 40; frame += 1) {
+    if (frame < 10) {
+      out.push({ frame, footY: 0.9, footX: 0.42, heelY: 0.9, heelX: 0.42 });
+      continue;
+    }
     const t = (frame - 10) / 30;
-    const footY = 0.85 - 0.35 * 4 * t * (1 - t); // parabola up then down
-    const hipY = footY - 0.28 - 0.08 * 4 * t * (1 - t);
-    out.push({ frame, footY, footX: 0.4 + t * 0.05, hipY });
+    const footY = 0.9 - 0.4 * 4 * t * (1 - t);
+    const heelY = footY - 0.01;
+    out.push({ frame, footY, footX: 0.4 + t * 0.05, heelY, heelX: 0.4 + t * 0.05 });
   }
   return out;
 }
@@ -37,7 +43,7 @@ describe("jumpOverlay foot path", () => {
     const model = buildJumpOverlayModel(samples(), 10, 40, 22.5);
     expect(model).not.toBeNull();
     expect(model!.heightIn).toBe(22.5);
-    expect(model!.apex.frame).toBe(apex!.frame);
+    expect(model!.heelApex.frame).toBeGreaterThan(15);
   });
 
   it("returns null without XY samples", () => {
@@ -49,23 +55,25 @@ describe("jumpOverlay foot path", () => {
     expect(buildJumpOverlayModel(bare, 10, 30, 12)).toBeNull();
   });
 
-  it("uses foot takeoff/apex levels for the height bracket (not hips)", () => {
+  it("marks heel peak and floor with official flight-time label (no hip guides)", () => {
     const model = buildJumpOverlayModel(samples(), 10, 40, 21.5);
     expect(model).not.toBeNull();
-    expect(model!.takeoffFootY).toBeCloseTo(0.85, 2);
-    expect(model!.apexFootY).toBe(model!.apex.y);
-    expect(model!.apexFootY).toBeLessThan(model!.takeoffFootY);
-    expect(model!.apexFrame).toBe(model!.apex.frame);
-    // Official number is kept even though pixel span is not calibrated.
+    expect(model!.floorY).toBeCloseTo(0.9, 2);
+    expect(floorLevelNearTakeoff(samples(), 10)).toBeCloseTo(0.9, 2);
+    const heels = heelPathDuringFlight(samples(), 10, 40);
+    const heelApex = findFlightApex(heels);
+    expect(heelApex).not.toBeNull();
+    expect(model!.heelApex.frame).toBe(heelApex!.frame);
+    expect(model!.heelApex.y).toBeLessThan(model!.floorY);
+    expect(model!.apexFrame).toBe(model!.heelApex.frame);
     expect(model!.heightIn).toBe(21.5);
-    expect(model!.bracketX).toBeGreaterThan(model!.apex.x);
+    expect(model).not.toHaveProperty("takeoffHipY");
+    expect(model).not.toHaveProperty("bracketX");
   });
 
   it("keeps overlay chrome off the old yellow palette", () => {
     expect(OVERLAY_LINE.toLowerCase()).toBe("#3a3a3a");
     expect(OVERLAY_TEXT.toLowerCase()).toBe("#1a2a6c");
-    expect(OVERLAY_LINE.toLowerCase()).not.toContain("efe");
-    expect(OVERLAY_TEXT.toLowerCase()).not.toContain("efe");
   });
 });
 

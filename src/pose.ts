@@ -238,7 +238,34 @@ export function sampleFromLandmarks(
   if (contactX !== null) sample.footX = contactX;
   if (upper !== null) sample.upperFootY = upper;
   if (hip !== null) sample.hipY = hip;
+  const heel = contactHeelXY(landmarks, contactX);
+  if (heel) {
+    sample.heelX = heel.x;
+    sample.heelY = heel.y;
+  }
   return sample;
+}
+
+/** Prefer the heel on the contact-foot side; else the lower (floor) heel. */
+function contactHeelXY(
+  landmarks: readonly NormalizedLandmark[],
+  contactX: number | null,
+): { x: number; y: number } | null {
+  const left = landmarks[29];
+  const right = landmarks[30];
+  const leftOk = left && (left.visibility ?? 1) >= MIN_VISIBILITY;
+  const rightOk = right && (right.visibility ?? 1) >= MIN_VISIBILITY;
+  if (leftOk && rightOk && contactX !== null) {
+    return Math.abs(left.x - contactX) <= Math.abs(right.x - contactX)
+      ? { x: left.x, y: left.y }
+      : { x: right.x, y: right.y };
+  }
+  if (leftOk && rightOk) {
+    return left.y >= right.y ? { x: left.x, y: left.y } : { x: right.x, y: right.y };
+  }
+  if (leftOk) return { x: left.x, y: left.y };
+  if (rightOk) return { x: right.x, y: right.y };
+  return null;
 }
 
 function meanPointX(

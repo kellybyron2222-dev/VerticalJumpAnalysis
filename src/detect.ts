@@ -21,6 +21,10 @@ export interface FootSample {
   upperFootY?: number;
   /** Mid-hip Y when available (larger = lower in frame). */
   hipY?: number;
+  /** Contact-side heel landmark X (0–1), when known — height annotation. */
+  heelX?: number;
+  /** Contact-side heel landmark Y (0–1, top → bottom), when known. */
+  heelY?: number;
 }
 
 /** Timing for real-time foot velocity (presentation clock ÷ stretch). */
@@ -86,6 +90,10 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
             ? sample.upperFootY
             : prev?.upperFootY,
         hipY: sample.hipY !== undefined && Number.isFinite(sample.hipY) ? sample.hipY : prev?.hipY,
+        heelX:
+          sample.heelX !== undefined && Number.isFinite(sample.heelX) ? sample.heelX : prev?.heelX,
+        heelY:
+          sample.heelY !== undefined && Number.isFinite(sample.heelY) ? sample.heelY : prev?.heelY,
       });
     }
   }
