@@ -3,6 +3,7 @@ import {
   bestOf,
   groupSessions,
   metricByDate,
+  metricEveryJump,
   sessionsForDay,
   trialDay,
 } from "./sessions.ts";
@@ -81,5 +82,18 @@ describe("metric by date", () => {
     // Oct 14 drop @ 6 in: mean of 14 and 16
     expect(box6.points[1]!.value).toBeCloseTo(15, 5);
     expect(box6.points[1]!.best).toBe(16);
+  });
+
+  it("every-jump mode emits one point per saved jump", () => {
+    const trials = [
+      jump({ id: "a", createdAt: "2026-10-14T10:00:00", jumpType: "drop", boxHeightIn: 6, heightIn: 14 }),
+      jump({ id: "b", createdAt: "2026-10-14T11:00:00", jumpType: "drop", boxHeightIn: 6, heightIn: 16 }),
+      jump({ id: "c", createdAt: "2026-10-14T12:00:00", jumpType: "drop", boxHeightIn: 12, heightIn: 12 }),
+    ];
+    const series = metricEveryJump(trials, "heightIn", "drop");
+    const box6 = series.find((s) => s.boxHeightIn === 6)!;
+    expect(box6.points).toHaveLength(2);
+    expect(box6.points.map((p) => p.value)).toEqual([14, 16]);
+    expect(box6.points.every((p) => p.count === 1)).toBe(true);
   });
 });

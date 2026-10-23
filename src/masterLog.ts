@@ -172,24 +172,59 @@ export function masterRowsFromTrials(trials: readonly TrialRecord[]): MasterLogR
   return trials.map(trialToMasterRow);
 }
 
-export function buildWorkbookBlob(trials: readonly TrialRecord[]): Blob {
-  const rows = [ [...MASTER_LOG_HEADERS], ...masterRowsFromTrials(trials) ];
+/** First 8 columns — Jump Test paste order for Drop / Depth sheets. */
+export const PASTE_LOG_HEADERS = MASTER_LOG_HEADERS.slice(0, 8);
+
+export function pasteRowFromTrial(trial: TrialRecord): (string | number)[] {
+  return trialToMasterRow(trial).slice(0, 8);
+}
+
+function sheetFromPasteRows(trials: readonly TrialRecord[]) {
+  const rows = [[...PASTE_LOG_HEADERS], ...trials.map(pasteRowFromTrial)];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet["!cols"] = MASTER_LOG_HEADERS.map((header) => ({
+  sheet["!cols"] = PASTE_LOG_HEADERS.map((header) => ({
     wch: Math.max(12, header.length + 2),
   }));
+  return sheet;
+}
+
+/** Excel export: Drop jump + Depth jump sheets (paste columns only). */
+export function buildWorkbookBlob(trials: readonly TrialRecord[]): Blob {
+  const drops = trials.filter((t) => t.jumpType === "drop");
+  const depths = trials.filter((t) => t.jumpType === "depth");
   const book = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(book, sheet, "Jump log");
+  XLSX.utils.book_append_sheet(book, sheetFromPasteRows(drops), "Drop jump");
+  XLSX.utils.book_append_sheet(book, sheetFromPasteRows(depths), "Depth jump");
   const buffer = XLSX.write(book, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
   return new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
 }
 
+/** GitHub sync CSV — full MASTER_LOG_HEADERS, all jump types. Do not change shape. */
 export function buildCsvText(trials: readonly TrialRecord[]): string {
   const lines = [MASTER_LOG_HEADERS.join(",")];
   for (const row of masterRowsFromTrials(trials)) {
     lines.push(row.map(csvEscape).join(","));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/** Master-log download CSV: Drop jump section then Depth jump section (paste columns). */
+export function buildExportCsvText(trials: readonly TrialRecord[]): string {
+  const drops = trials.filter((t) => t.jumpType === "drop");
+  const depths = trials.filter((t) => t.jumpType === "depth");
+  const lines: string[] = [];
+  lines.push("Drop jump");
+  lines.push(PASTE_LOG_HEADERS.join(","));
+  for (const trial of drops) {
+    lines.push(pasteRowFromTrial(trial).map(csvEscape).join(","));
+  }
+  lines.push("");
+  lines.push("Depth jump");
+  lines.push(PASTE_LOG_HEADERS.join(","));
+  for (const trial of depths) {
+    lines.push(pasteRowFromTrial(trial).map(csvEscape).join(","));
   }
   return `${lines.join("\n")}\n`;
 }

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import * as XLSX from "xlsx";
 import {
   MASTER_LOG_HEADERS,
+  PASTE_LOG_HEADERS,
   buildCsvText,
+  buildExportCsvText,
+  buildWorkbookBlob,
   isoWeek,
   masterRowsFromTrials,
   sortMasterRows,
@@ -67,10 +71,38 @@ describe("master log row mapping", () => {
     expect(rows[0]![10]).toBe("");
   });
 
-  it("builds CSV with escaped notes", () => {
+  it("builds GitHub CSV with full headers (unchanged shape)", () => {
     const csv = buildCsvText([trial({ id: "a", jumpType: "drop" })]);
-    expect(csv.split("\n")[0]).toContain("Date,Week,Box");
+    expect(csv.split("\n")[0]).toBe(MASTER_LOG_HEADERS.join(","));
     expect(csv).toContain('"good, day"');
+  });
+
+  it("export xlsx/csv split Drop jump vs Depth jump paste columns", async () => {
+    const trials = [
+      trial({ id: "a", jumpType: "drop" }),
+      trial({ id: "b", jumpType: "depth", boxHeightIn: 12, notes: "Tuesday 12 in" }),
+    ];
+    const exportCsv = buildExportCsvText(trials);
+    expect(exportCsv).toContain("Drop jump");
+    expect(exportCsv).toContain("Depth jump");
+    expect(exportCsv).toContain(PASTE_LOG_HEADERS.join(","));
+    expect(exportCsv).toContain("Tuesday 12 in");
+    expect(exportCsv).not.toContain("Jump type");
+
+    const blob = buildWorkbookBlob(trials);
+    const buf = await blob.arrayBuffer();
+    const book = XLSX.read(buf, { type: "array" });
+    expect(book.SheetNames).toEqual(["Drop jump", "Depth jump"]);
+    const drop = XLSX.utils.sheet_to_json<(string | number)[]>(book.Sheets["Drop jump"]!, {
+      header: 1,
+    });
+    const depth = XLSX.utils.sheet_to_json<(string | number)[]>(book.Sheets["Depth jump"]!, {
+      header: 1,
+    });
+    expect(drop[0]).toEqual([...PASTE_LOG_HEADERS]);
+    expect(drop).toHaveLength(2); // header + 1 drop
+    expect(depth).toHaveLength(2);
+    expect(depth[1]![7]).toBe("Tuesday 12 in");
   });
 
   it("sorts view rows by box height", () => {

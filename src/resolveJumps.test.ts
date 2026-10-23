@@ -154,6 +154,20 @@ describe("Byron false second jump (settling after one drop)", () => {
     expect(resolved.jumps[0]!.landing).toBe(266);
   });
 
+  it("flags Check marks when contact/flight outside 100–600 / 150–800 ms", () => {
+    // Flight ~1.11 s at 205.5 fps — still hard-valid (≤1 s contact, ≥150 ms flight) but soft-flagged.
+    const longFlight: DetectCandidate = {
+      stepOff: 60,
+      touchdown: 86,
+      takeoff: 122,
+      landing: 350,
+      score: 40,
+    };
+    const resolved = resolveJumpSet([longFlight], timing205, { jumpCount: 1 });
+    expect(resolved.jumps).toHaveLength(1);
+    expect(resolved.warnings.some((w) => /Check marks/i.test(w))).toBe(true);
+  });
+
   it("real 2-rep set (both ~10+ in, similar height) still returns 2", () => {
     // ~11 in each at 52 fps / 4× stretch (flight ~100 frames).
     const r1: DetectCandidate = {

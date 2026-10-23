@@ -38,7 +38,8 @@ const HIPS = [23, 24];
 /** Very low so black shoes / busy gym backgrounds still yield a track. */
 const MIN_VISIBILITY = 0.08;
 const MIN_VISIBILITY_PROXY = 0.05;
-const INPUT_EDGE = 512;
+/** Long-side decode cap before MediaPipe (desktop speed; landmarks stay normalized). */
+const INPUT_EDGE = 480;
 
 const landmarkerByQuality = new Map<PoseModelQuality, Promise<PoseLandmarker>>();
 
@@ -221,7 +222,7 @@ export interface AnalyzeOptions {
   video: HTMLVideoElement;
   seeker: FrameSeeker;
   frameCount: number;
-  onProgress: (message: string) => void;
+  onProgress: (message: string, fraction?: number) => void;
   signal: AbortSignal;
   /** Capture fps for real-time validation (e.g. 207). */
   captureFps?: number;
@@ -244,6 +245,23 @@ interface SamplePass {
   hipVis: number[];
 }
 
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+function formatEta(secondsLeft: number): string {
+  if (!Number.isFinite(secondsLeft) || secondsLeft <= 0) return "";
+  if (secondsLeft < 5) return "~a few seconds left";
+  if (secondsLeft < 60) return `~${Math.ceil(secondsLeft)}s left`;
+  return `~${Math.ceil(secondsLeft / 60)} min left`;
+}
+
 async function sampleFrames(
   landmarker: PoseLandmarker,
   video: HTMLVideoElement,
@@ -252,9 +270,11 @@ async function sampleFrames(
   canvas: HTMLCanvasElement,
   context: CanvasRenderingContext2D,
   signal: AbortSignal,
-  onProgress: (message: string) => void,
+  onProgress: (message: string, fraction?: number) => void,
   label: string,
   prevCentroid: { x: number; y: number } | null,
+  progressOffset = 0,
+  progressSpan = 1,
 ): Promise<SamplePass & { lastCentroid: { x: number; y: number } | null }> {
   const samples: FootSample[] = [];
   const ankleVis: number[] = [];
@@ -263,6 +283,7 @@ async function sampleFrames(
   const hipVis: number[] = [];
   let framesWithPerson = 0;
   let lastCentroid = prevCentroid;
+  const started = performance.now();
 
   for (let i = 0; i < frames.length; i += 1) {
     if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
@@ -282,7 +303,19 @@ async function sampleFrames(
       const sample = sampleFromLandmarks(picked.landmarks, frame);
       if (sample) samples.push(sample);
     }
-    if (i % 8 === 0) onProgress(`${label} ${i + 1} / ${frames.length}`);
+    if (i % 4 === 0 || i === frames.length - 1) {
+      const done = i + 1;
+      const elapsed = (performance.now() - started) / 1000;
+      const rate = done / Math.max(elapsed, 0.001);
+      const left = (frames.length - done) / Math.max(rate, 0.001);
+      const frac = progressOffset + progressSpan * (done / frames.length);
+      const eta = formatEta(left);
+      onProgress(
+        `${label} ${done} / ${frames.length}${eta ? ` · ${eta}` : ""}`,
+        frac,
+      );
+      await yieldToUi();
+    }
   }
   return {
     samples,
@@ -300,11 +333,13 @@ function prepareCanvas(video: HTMLVideoElement): {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
 } | null {
-  const scale = Math.min(1, INPUT_EDGE / Math.max(video.videoWidth, video.videoHeight));
+  const longSide = Math.max(video.videoWidth, video.videoHeight) || 1;
+  const scale = Math.min(1, INPUT_EDGE / longSide);
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
   canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-  const context = canvas.getContext("2d", { willReadFrequently: true });
+  // Alpha-less buffer; reuse for every frame (no per-frame canvas alloc).
+  const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
   if (!context) return null;
   return { canvas, context };
 }
@@ -367,6 +402,7 @@ export async function analyzeMultiClip(
     quality === "heavy"
       ? "Loading high-accuracy pose model (slower)…"
       : "Loading pose model…",
+    0.02,
   );
   const landmarker = await loadLandmarker(quality);
   const prepared = prepareCanvas(video);
@@ -387,7 +423,7 @@ export async function analyzeMultiClip(
 
   const step = frameCount <= 800 ? 1 : scanStep(frameCount);
   const coarse = coarseFrames(frameCount, step);
-  onProgress(`Scanning ${coarse.length} frames…`);
+  onProgress(`Scanning ${coarse.length} frames…`, 0.05);
   const coarsePass = await sampleFrames(
     landmarker,
     video,
@@ -399,6 +435,8 @@ export async function analyzeMultiClip(
     onProgress,
     "Scan",
     null,
+    0.05,
+    0.7,
   );
 
   const scanDiag = mergeDiag([coarsePass]);
@@ -438,7 +476,7 @@ export async function analyzeMultiClip(
     for (const frame of refineFrames(jump, Math.max(step, 2), frameCount)) refineSet.add(frame);
   }
   const refineList = [...refineSet].sort((a, b) => a - b);
-  onProgress(`Refining ${refineList.length} frames…`);
+  onProgress(`Refining ${refineList.length} frames…`, 0.75);
   const finePass = await sampleFrames(
     landmarker,
     video,
@@ -450,6 +488,8 @@ export async function analyzeMultiClip(
     onProgress,
     "Refine",
     coarsePass.lastCentroid,
+    0.75,
+    0.24,
   );
 
   const merged = [...coarsePass.samples, ...finePass.samples];

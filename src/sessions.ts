@@ -187,3 +187,37 @@ export function metricByDate(
       points: points.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0)),
     }));
 }
+
+/**
+ * One point per saved jump (not session mean), colored/grouped by box height.
+ * Same BoxDateSeries shape so the chart can reuse lines + legend.
+ */
+export function metricEveryJump(
+  trials: readonly TrialRecord[],
+  metric: SessionMetric,
+  jumpType?: JumpType,
+): BoxDateSeries[] {
+  const filtered = trials.filter(
+    (t) => jumpType === undefined || t.jumpType === jumpType,
+  );
+  const byBox = new Map<number, DateSeriesPoint[]>();
+  const ordered = [...filtered].sort((a, b) =>
+    a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+  );
+  for (const trial of ordered) {
+    const day = trialDay(trial.createdAt);
+    const value = trial[metric];
+    const point: DateSeriesPoint = {
+      day,
+      value,
+      best: value,
+      count: 1,
+    };
+    const list = byBox.get(trial.boxHeightIn);
+    if (list) list.push(point);
+    else byBox.set(trial.boxHeightIn, [point]);
+  }
+  return [...byBox.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([boxHeightIn, points]) => ({ boxHeightIn, points }));
+}

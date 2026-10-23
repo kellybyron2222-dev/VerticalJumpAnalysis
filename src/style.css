@@ -430,6 +430,43 @@ video {
   margin-top: 0;
 }
 
+.chart-mode {
+  margin: 0.6rem 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.chart-mode legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.detect-progress {
+  margin-top: 0.25rem;
+}
+
+.detect-progress progress {
+  display: block;
+  width: 100%;
+  height: 0.55rem;
+  accent-color: var(--ink);
+}
+
+.check-marks-flag {
+  margin: 0.15rem 0 0;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.marks-attention {
+  outline: 2px solid var(--danger);
+  outline-offset: 4px;
+  border-radius: 10px;
+  padding: 0.35rem;
+}
+
 .timeline {
   position: relative;
   height: 28px;

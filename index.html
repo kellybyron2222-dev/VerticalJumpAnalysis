@@ -336,7 +336,11 @@
               <input type="checkbox" id="high-accuracy" />
               <span>High accuracy (slower — heavy pose model)</span>
             </label>
+            <div class="detect-progress" hidden>
+              <progress id="detect-progress-bar" max="1" value="0"></progress>
+            </div>
             <p id="detect-status" role="status"></p>
+            <p id="check-marks-flag" class="check-marks-flag" hidden role="status">Check marks</p>
           </div>
 
           <section id="multi-jump-panel" class="multi-jump" hidden>
@@ -347,8 +351,8 @@
             <p id="multi-jump-status" class="detail" role="status"></p>
           </section>
 
-          <h3 class="section-label">Event marks</h3>
-          <div class="marks">
+          <h3 class="section-label" id="marks-heading">Event marks</h3>
+          <div class="marks" id="marks-panel">
             <article class="mark" data-event="stepoff">
               <div>
                 <h3>Step-off</h3>
@@ -520,6 +524,13 @@
               <option value="all">Both</option>
             </select>
           </label>
+          <fieldset class="chart-mode">
+            <legend>Chart points</legend>
+            <div id="chart-mode-chips" class="chips" role="group" aria-label="Chart points">
+              <button type="button" data-mode="mean" aria-pressed="true">Mean by date</button>
+              <button type="button" data-mode="every" aria-pressed="false">Every jump</button>
+            </div>
+          </fieldset>
           <div id="chart-root"></div>
           <p id="chart-legend" class="chart-legend"></p>
         </section>

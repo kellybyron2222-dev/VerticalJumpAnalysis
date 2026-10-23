@@ -86,6 +86,8 @@ Auto-detect (on-device only; video never uploads):
 - **Jumps in this clip** selector: Auto / 1 / 2 / 3 / 4 (remembered; default Auto). Fixed N returns exactly the N best-scoring valid cycles in time order (N=1 → single jump, no multi-jump panel). Auto may find 1–4.
 - In Auto, drop a cycle as a rep when height < 4 in, RSI < 0.5, or height < 40% of the best cycle; require a real drop/step-off (meaningful free-fall) or mid-drop/countermovement — not a 1-frame fake step-off from walking/settling. Prefer under-detecting over inventing a second jump.
 - Flag (do not hide) any cycle with flight > 650 ms real or height > 30 in: "check LD mark: landing may be late".
+- Soft self-check: when a chosen cycle has contact outside 100–600 ms real or flight outside 150–800 ms, show a clear **Check marks** flag and keep manual Set/Go-to controls prominent (do not hide the jump).
+- Pose scan: decode frames capped ~480px on the long side before MediaPipe, reuse one canvas buffer, yield to the UI during the scan, and show a progress bar with ETA. Timing math is unchanged.
 - Keep real-time plausibility gates: contact 80–1000 ms, flight ≥150 ms. If no plausible jump is found, say so and fall back to manual frame marking — never apply nonsense marks.
 
 ### Milestone 3 — Metrics, sessions, and box profile
@@ -103,7 +105,7 @@ Behavior:
 
 - Each analyzed clip saves as one jump (local numbers only): date, jump type, box height (from the selector), contact time, flight time, jump height, RSI.
 - Group the day’s jumps by jump type and box height. Show mean and best for each metric (target 3 jumps per session / box).
-- Chart jump height, contact time, and RSI by box height over weeks/sessions (simple SVG; readable on phone).
+- Chart jump height, contact time, and RSI by box height over weeks/sessions (simple SVG; readable on phone). Toggle **Mean by date / Every jump** (remembered; default mean by date). Every-jump mode plots each saved jump as its own dot (same box-height colors/legend).
 - Unit tests cover session grouping and aggregation.
 
 ### Milestone 4 — Baseline and flags
@@ -129,7 +131,7 @@ Done when all of the following work (per jump type + box height, for height, con
 Done when:
 
 - Menu screen **Master log** lists every saved jump (drop, depth, box-test) in a sortable table: Date, Week, Jump type, Box (in), Arm swing, Height (in), GCT (ms), Flight (ms), RSI, Test id, Notes; edit and delete supported.
-- **Export to Excel** downloads a real `.xlsx` (SheetJS) with a `Jump log` sheet (header row + sensible column widths). **Export CSV** also offered. Download uses the share sheet / Save to Files path on iOS Safari when available.
+- **Export to Excel** downloads a real `.xlsx` (SheetJS) with separate **Drop jump** and **Depth jump** sheets (paste columns only: Date, Week, Box, Arm swing, Height (in), GCT (ms), RSI (m/s), Notes). **Export CSV** uses the same two sections. Download uses the share sheet / Save to Files path on iOS Safari when available. The GitHub sync CSV keeps the full multi-column log shape unchanged.
 - Export columns: Date, Week, Box, Arm swing, Height (in), GCT (ms), RSI (m/s), Notes (Jump Test paste order), then Jump type, Flight (ms), Test id.
 - No Microsoft login, MSAL, or Graph. Unit tests cover row mapping.
 - **GitHub jump log (source of truth):** fine-grained PAT (Contents read/write on this repo only) stored in localStorage only — never committed or logged. Directions explain how to create the token. On load (when a token is set) the app fetches the remote log; localStorage is only a cache/outbox. Every save/edit/delete writes the full log immediately via GitHub REST Contents API (`PUT …/contents/data/jump-log.csv` and `data/jump-log.json`) on branch `data` (created from `main` if missing) so log commits do not trigger Pages on `main`. Sha retry; dirty outbox shows **Pending sync**; **Sync now** + last-synced status; empty-remote heal and mid-sync re-read so CSV includes rows. UI: “Saved to your jump log” / “Saved, will sync”; section **Jump log**. Unit tests cover CSV rows, merge, heal, and mid-sync PUT.

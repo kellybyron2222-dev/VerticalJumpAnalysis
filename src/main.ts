@@ -57,8 +57,16 @@ import {
   type JumpType,
   type TrialRecord,
 } from "./storage.ts";
-import { metricByDate, sessionsForDay, trialDay, weekKey, type SessionMetric } from "./sessions.ts";
+import {
+  metricByDate,
+  metricEveryJump,
+  sessionsForDay,
+  trialDay,
+  weekKey,
+  type SessionMetric,
+} from "./sessions.ts";
 import { metricLabel, renderBoxChart } from "./chart.ts";
+import { loadChartModePref, parseChartMode, saveChartModePref, type ChartMode } from "./chartModePref.ts";
 import { BUILD_ID, ensureLatestBuild } from "./version.ts";
 import {
   DEFAULT_CV,
@@ -91,7 +99,7 @@ import {
   type BoxTestRowResult,
 } from "./boxTestPipeline.ts";
 import {
-  buildCsvText,
+  buildExportCsvText,
   buildWorkbookBlob,
   downloadBlob,
   sortMasterRows,
@@ -175,11 +183,17 @@ const chartRoot = must<HTMLElement>("#chart-root");
 const chartLegend = must<HTMLElement>("#chart-legend");
 const chartMetric = must<HTMLSelectElement>("#chart-metric");
 const chartJumpType = must<HTMLSelectElement>("#chart-jump-type");
+const chartModeChips = document.querySelectorAll<HTMLButtonElement>("#chart-mode-chips button");
+let chartMode: ChartMode = loadChartModePref(localStorage);
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const highAccuracy = must<HTMLInputElement>("#high-accuracy");
 const jumpCountChips = document.querySelectorAll<HTMLButtonElement>("#jump-count-chips button");
 const detectStatus = must<HTMLElement>("#detect-status");
+const detectProgressWrap = must<HTMLElement>(".detect-progress");
+const detectProgressBar = must<HTMLProgressElement>("#detect-progress-bar");
+const checkMarksFlag = must<HTMLElement>("#check-marks-flag");
+const marksPanel = must<HTMLElement>("#marks-panel");
 let jumpCountChoice: JumpCountChoice = loadJumpCountPref(localStorage);
 
 function syncJumpCountChips(): void {
@@ -197,6 +211,40 @@ for (const chip of jumpCountChips) {
   });
 }
 syncJumpCountChips();
+
+function syncChartModeChips(): void {
+  for (const chip of chartModeChips) {
+    chip.setAttribute("aria-pressed", String(parseChartMode(chip.dataset.mode) === chartMode));
+  }
+}
+for (const chip of chartModeChips) {
+  chip.addEventListener("click", () => {
+    chartMode = parseChartMode(chip.dataset.mode);
+    saveChartModePref(localStorage, chartMode);
+    syncChartModeChips();
+    renderHistory();
+  });
+}
+syncChartModeChips();
+
+function setDetectProgress(fraction: number | null, message?: string): void {
+  if (fraction === null) {
+    detectProgressWrap.hidden = true;
+    detectProgressBar.value = 0;
+    return;
+  }
+  detectProgressWrap.hidden = false;
+  detectProgressBar.value = Math.min(1, Math.max(0, fraction));
+  if (message !== undefined) detectStatus.textContent = message;
+}
+
+function setCheckMarksFlag(on: boolean, detail = ""): void {
+  checkMarksFlag.hidden = !on;
+  checkMarksFlag.textContent = on
+    ? detail || "Check marks — contact/flight look off. Use Set on each event."
+    : "";
+  marksPanel.classList.toggle("marks-attention", on);
+}
 const detectDiagEl = must<HTMLElement>("#detect-diag");
 const slowInput = must<HTMLInputElement>("#slowmo");
 const cadenceButton = must<HTMLButtonElement>("#detect-cadence");
@@ -490,9 +538,9 @@ function initMasterLogUi(): void {
     void (async () => {
       try {
         const trials = loadTrials(localStorage);
-        const blob = new Blob([buildCsvText(trials)], { type: "text/csv;charset=utf-8" });
+        const blob = new Blob([buildExportCsvText(trials)], { type: "text/csv;charset=utf-8" });
         await downloadBlob(blob, `jump-lab-${stamp()}.csv`);
-        masterExportStatus.textContent = "CSV ready — use Share / Save to Files on iPhone.";
+        masterExportStatus.textContent = "CSV ready (Drop jump + Depth jump) — Share / Save on iPhone.";
       } catch (error) {
         masterExportStatus.textContent = error instanceof Error ? error.message : String(error);
       }
@@ -1098,6 +1146,8 @@ async function runDetection(): Promise<void> {
   multiJumpPanel.hidden = true;
   multiJumpRows = [];
   showDetectDiagnostics(null);
+  setCheckMarksFlag(false);
+  setDetectProgress(0, "Starting…");
   try {
     const stretch = activeStretch();
     const result = await analyzeMultiClip({
@@ -1110,8 +1160,8 @@ async function runDetection(): Promise<void> {
       frameTimes: frameTimes ?? undefined,
       poseQuality: highAccuracy.checked ? "heavy" : "lite",
       jumpCount: jumpCountChoice,
-      onProgress: (message) => {
-        detectStatus.textContent = message;
+      onProgress: (message, fraction) => {
+        setDetectProgress(fraction ?? detectProgressBar.value, message);
       },
     });
     if (controller.signal.aborted) {
@@ -1130,10 +1180,10 @@ async function runDetection(): Promise<void> {
       ...events,
       stepOff: stepOffForFall(events.stepOff, events.touchdown, frameTimes ?? undefined, stretch),
     }));
-    const ldWarnings = (result.diagnostics.notes ?? []).filter((n) =>
-      n.includes("check LD mark"),
-    );
-    const warnSuffix = ldWarnings.length ? ` ${ldWarnings.join(" ")}` : "";
+    const notes = result.diagnostics.notes ?? [];
+    const checkNotes = notes.filter((n) => /check marks|check LD mark/i.test(n));
+    setCheckMarksFlag(checkNotes.length > 0, checkNotes[0] ?? "");
+    const warnSuffix = checkNotes.length ? ` ${checkNotes.join(" ")}` : "";
     if (jumps.length === 1) {
       const events = jumps[0]!;
       marks.stepOff = events.stepOff;
@@ -1143,8 +1193,8 @@ async function runDetection(): Promise<void> {
       frame = events.touchdown;
       multiJumpPanel.hidden = true;
       detectStatus.textContent = (
-        result.lowConfidence
-          ? "Marks set but look off — check them with Go to / Set (see Advanced diagnostics)."
+        result.lowConfidence || checkNotes.length
+          ? "Marks set — Check marks flagged. Use Go to / Set on each event."
           : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
       ) + warnSuffix;
       return;
@@ -1158,8 +1208,8 @@ async function runDetection(): Promise<void> {
     marks.landing = first.landing;
     frame = first.touchdown;
     detectStatus.textContent = (
-      result.lowConfidence
-        ? `Found ${jumps.length} jumps but timings look off — check each one (see Advanced).`
+      result.lowConfidence || checkNotes.length
+        ? `Found ${jumps.length} jumps — Check marks flagged. Review each one.`
         : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`
     ) + warnSuffix;
   } catch (error) {
@@ -1168,6 +1218,7 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = `Auto-detect failed: ${error instanceof Error ? error.message : String(error)}. Mark touchdown, takeoff, and landing by hand.`;
     }
   } finally {
+    setDetectProgress(null);
     if (detecting === controller) {
       detecting = null;
       fpsInput.disabled = false;
@@ -1639,7 +1690,10 @@ function renderHistory(): void {
   const metric = chartMetric.value as SessionMetric;
   const typeValue = chartJumpType.value;
   const jumpType = typeValue === "all" ? undefined : (typeValue as JumpType);
-  const series = metricByDate(trials, metric, jumpType);
+  const series =
+    chartMode === "every"
+      ? metricEveryJump(trials, metric, jumpType)
+      : metricByDate(trials, metric, jumpType);
   const { svg, legend } = renderBoxChart(series, metric);
   chartRoot.replaceChildren(svg);
   chartLegend.replaceChildren();
@@ -1648,7 +1702,10 @@ function renderHistory(): void {
     return;
   }
   const title = document.createElement("span");
-  title.textContent = `${metricLabel(metric)} · mean by date`;
+  title.textContent =
+    chartMode === "every"
+      ? `${metricLabel(metric)} · every jump`
+      : `${metricLabel(metric)} · mean by date`;
   chartLegend.append(title);
   for (const entry of legend) {
     const item = document.createElement("span");

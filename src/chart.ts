@@ -121,7 +121,10 @@ export function renderBoxChart(series: readonly BoxDateSeries[], metric: Session
       dot.setAttribute("r", "3.5");
       dot.setAttribute("fill", color);
       const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-      title.textContent = `${formatDayTick(point.day)} · ${entry.boxHeightIn} in · mean ${formatTick(metric, point.value)} · best ${formatTick(metric, point.best)}`;
+      title.textContent =
+        point.count === 1
+          ? `${formatDayTick(point.day)} · ${entry.boxHeightIn} in · ${formatTick(metric, point.value)}`
+          : `${formatDayTick(point.day)} · ${entry.boxHeightIn} in · mean ${formatTick(metric, point.value)} · best ${formatTick(metric, point.best)}`;
       dot.append(title);
       svg.append(dot);
     }

@@ -41,6 +41,12 @@ const MAX_DROP_FALL_S = 0.55;
 const FLAG_FLIGHT_S = 0.65;
 const FLAG_HEIGHT_IN = 30;
 
+/** Soft “Check marks” band (stricter than hard gates; does not reject). */
+const CHECK_CONTACT_MIN_S = 0.1;
+const CHECK_CONTACT_MAX_S = 0.6;
+const CHECK_FLIGHT_MIN_S = 0.15;
+const CHECK_FLIGHT_MAX_S = 0.8;
+
 export function cycleRealDurations(
   c: Pick<DetectCandidate, "touchdown" | "takeoff" | "landing">,
   timing: JumpTimingContext,
@@ -178,6 +184,15 @@ export function landingCheckWarnings(
       warnings.push(
         `${label}: check LD mark: landing may be late` +
           ` (flight ${(m.flightS * 1000).toFixed(0)} ms, height ${m.heightIn.toFixed(1)} in).`,
+      );
+    }
+    if (
+      !(m.contactS >= CHECK_CONTACT_MIN_S && m.contactS <= CHECK_CONTACT_MAX_S) ||
+      !(m.flightS >= CHECK_FLIGHT_MIN_S && m.flightS <= CHECK_FLIGHT_MAX_S)
+    ) {
+      warnings.push(
+        `Check marks: ${label} contact ${(m.contactS * 1000).toFixed(0)} ms / flight ${(m.flightS * 1000).toFixed(0)} ms ` +
+          `(typical contact 100–600 ms, flight 150–800 ms). Use Set on each event.`,
       );
     }
   });
