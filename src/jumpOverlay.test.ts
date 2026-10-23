@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { FootSample } from "./detect.ts";
 import {
+  OVERLAY_LINE,
+  OVERLAY_TEXT,
   buildJumpOverlayModel,
   exportFrameHoldMs,
   exportVideoFrameRange,
   findFlightApex,
-  findHipApex,
   footPathDuringFlight,
   parseExportPlaybackSpeed,
   pickRecorderMime,
@@ -48,17 +49,23 @@ describe("jumpOverlay foot path", () => {
     expect(buildJumpOverlayModel(bare, 10, 30, 12)).toBeNull();
   });
 
-  it("stores takeoff and hip-apex for CoM height bracket", () => {
+  it("uses foot takeoff/apex levels for the height bracket (not hips)", () => {
     const model = buildJumpOverlayModel(samples(), 10, 40, 21.5);
     expect(model).not.toBeNull();
-    expect(model!.takeoffHipY).not.toBeNull();
-    expect(model!.apexHipY).not.toBeNull();
-    expect(model!.apexHipY!).toBeLessThan(model!.takeoffHipY!);
-    const hip = findHipApex(samples(), 10, 40);
-    expect(hip).not.toBeNull();
-    expect(hip!.hipY).toBe(model!.apexHipY);
+    expect(model!.takeoffFootY).toBeCloseTo(0.85, 2);
+    expect(model!.apexFootY).toBe(model!.apex.y);
+    expect(model!.apexFootY).toBeLessThan(model!.takeoffFootY);
     expect(model!.apexFrame).toBe(model!.apex.frame);
+    // Official number is kept even though pixel span is not calibrated.
+    expect(model!.heightIn).toBe(21.5);
     expect(model!.bracketX).toBeGreaterThan(model!.apex.x);
+  });
+
+  it("keeps overlay chrome off the old yellow palette", () => {
+    expect(OVERLAY_LINE.toLowerCase()).toBe("#3a3a3a");
+    expect(OVERLAY_TEXT.toLowerCase()).toBe("#1a2a6c");
+    expect(OVERLAY_LINE.toLowerCase()).not.toContain("efe");
+    expect(OVERLAY_TEXT.toLowerCase()).not.toContain("efe");
   });
 });
 
