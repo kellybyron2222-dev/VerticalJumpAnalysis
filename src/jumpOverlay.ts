@@ -83,8 +83,8 @@ export function drawFootOverlay(
 
   if (model.path.length >= 2) {
     ctx.save();
-    ctx.strokeStyle = "rgba(239, 227, 106, 0.95)";
-    ctx.lineWidth = Math.max(2, width * 0.006);
+    ctx.strokeStyle = "rgba(239, 227, 106, 0.28)";
+    ctx.lineWidth = Math.max(1.25, width * 0.004);
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.beginPath();
@@ -101,15 +101,15 @@ export function drawFootOverlay(
   if (showTags) {
     for (const point of model.path) {
       const p = px(point);
-      const r = Math.max(3, width * 0.008);
+      const r = Math.max(2, width * 0.0055);
       ctx.beginPath();
-      ctx.fillStyle = "rgba(14, 107, 82, 0.9)";
+      ctx.fillStyle = "rgba(14, 107, 82, 0.28)";
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
-  // Apex tag with jump height
+  // Apex tag with jump height — graphics faint; label text stays strong.
   const apex = px(model.apex);
   const tag = `${model.heightIn.toFixed(1)} in`;
   ctx.save();
@@ -122,21 +122,21 @@ export function drawFootOverlay(
   let boxY = apex.y - boxH - 12;
   boxX = Math.max(4, Math.min(width - boxW - 4, boxX));
   boxY = Math.max(4, boxY);
-  ctx.fillStyle = "rgba(28, 25, 20, 0.82)";
+  ctx.fillStyle = "rgba(28, 25, 20, 0.32)";
   ctx.fillRect(boxX, boxY, boxW, boxH);
   ctx.fillStyle = "#efe36a";
   ctx.textBaseline = "middle";
   ctx.fillText(tag, boxX + padX, boxY + boxH / 2);
   // Stem to apex
-  ctx.strokeStyle = "rgba(239, 227, 106, 0.85)";
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "rgba(239, 227, 106, 0.28)";
+  ctx.lineWidth = 1.25;
   ctx.beginPath();
   ctx.moveTo(apex.x, boxY + boxH);
   ctx.lineTo(apex.x, apex.y);
   ctx.stroke();
   ctx.beginPath();
-  ctx.fillStyle = "#efe36a";
-  ctx.arc(apex.x, apex.y, Math.max(4, width * 0.01), 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(239, 227, 106, 0.35)";
+  ctx.arc(apex.x, apex.y, Math.max(3, width * 0.008), 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
