@@ -26,7 +26,6 @@ import {
   buildJumpOverlayModel,
   composeJumpCardPng,
   drawFootOverlay,
-  drawMetricsStrip,
   exportFrameHoldMs,
   exportVideoFrameRange,
   parseExportPlaybackSpeed,
@@ -2125,10 +2124,9 @@ async function exportJumpVideo(): Promise<void> {
   };
   const w = video.videoWidth || 720;
   const h = video.videoHeight || 1280;
-  const stripH = Math.max(96, Math.round(w * 0.18));
   const canvas = document.createElement("canvas");
   canvas.width = w;
-  canvas.height = h + stripH;
+  canvas.height = h;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
     overlayStatus.textContent = "Canvas unavailable.";
@@ -2171,7 +2169,11 @@ async function exportJumpVideo(): Promise<void> {
       ctx.fillStyle = "#1c1914";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, w, h);
-      drawFootOverlay(ctx, w, h, model, { showTags: true, currentFrame: f });
+      drawFootOverlay(ctx, w, h, model, {
+        showTags: true,
+        currentFrame: f,
+        metrics,
+      });
       const pct = Math.round(((f - start + 1) / total) * 90);
       overlayStatus.textContent = `Recording annotated video… ${pct}%`;
       const next = Math.min(f + 1, end);
@@ -2181,14 +2183,8 @@ async function exportJumpVideo(): Promise<void> {
           : 1 / Math.max(1, fps);
       await sleepMs(exportFrameHoldMs(realDt, exportPlaybackSpeed));
     }
-    // End result strip held briefly so Share preview shows the numbers.
-    ctx.fillStyle = "#1c1914";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(video, 0, 0, w, h);
-    drawFootOverlay(ctx, w, h, model, { showTags: true, currentFrame: end });
-    drawMetricsStrip(ctx, 0, h, w, stripH, metrics);
     overlayStatus.textContent = "Recording annotated video… 95%";
-    await sleepMs(1600);
+    await sleepMs(400);
     recorder.stop();
     await stopped;
     const recordedType = recorder.mimeType || mimeType || "video/webm";

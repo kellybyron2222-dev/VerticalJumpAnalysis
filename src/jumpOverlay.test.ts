@@ -11,7 +11,10 @@ import {
   heelPathDuringFlight,
   heelTrailThrough,
   parseExportPlaybackSpeed,
+  METRICS_SAFE,
   exportReadyMediaVisibility,
+  metricsBandOpacity,
+  metricsBandRect,
   pickRecorderMime,
   recorderFormatNote,
 } from "./jumpOverlay.ts";
@@ -100,5 +103,18 @@ describe("jump video export helpers", () => {
   it("shows only one export preview at a time (card XOR video)", () => {
     expect(exportReadyMediaVisibility("image")).toEqual({ showVideo: false, showImage: true });
     expect(exportReadyMediaVisibility("video")).toEqual({ showVideo: true, showImage: false });
+  });
+
+  it("places the metrics band in an Instagram-safe top zone", () => {
+    const h = 1280;
+    const w = 720;
+    const band = metricsBandRect(w, h);
+    expect(band.y).toBeCloseTo(h * METRICS_SAFE.topMargin, 5);
+    expect(band.y + band.h).toBeLessThanOrEqual(h / 3 + 1);
+    expect(band.y + band.h).toBeLessThan(h * (1 - METRICS_SAFE.bottomClear));
+    expect(metricsBandOpacity(null, 10)).toBe(1);
+    expect(metricsBandOpacity(5, 10)).toBe(0);
+    expect(metricsBandOpacity(10, 10)).toBeGreaterThan(0);
+    expect(metricsBandOpacity(20, 10)).toBe(1);
   });
 });

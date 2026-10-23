@@ -188,6 +188,90 @@ function strokeTrailSegment(
   ctx.restore();
 }
 
+/**
+ * Instagram-safe metrics band: ~12% from top, inside top third;
+ * keep bottom ~15% clear of important chrome.
+ */
+export const METRICS_SAFE = {
+  topMargin: 0.12,
+  bottomClear: 0.15,
+  bandHeight: 0.1,
+} as const;
+
+export function metricsBandRect(
+  width: number,
+  height: number,
+): { x: number; y: number; w: number; h: number } {
+  const y = height * METRICS_SAFE.topMargin;
+  const maxBottom = height / 3;
+  const h = Math.min(
+    Math.max(52, height * METRICS_SAFE.bandHeight),
+    Math.max(40, maxBottom - y),
+  );
+  return { x: 0, y, w: width, h };
+}
+
+/** Fade in at takeoff, then stay; full opacity for still card (null frame). */
+export function metricsBandOpacity(
+  currentFrame: number | null | undefined,
+  takeoff: number,
+): number {
+  if (currentFrame == null) return 1;
+  if (currentFrame < takeoff) return 0;
+  const fadeFrames = 5;
+  if (currentFrame < takeoff + fadeFrames) {
+    return (currentFrame - takeoff + 1) / fadeFrames;
+  }
+  return 1;
+}
+
+/** On-image Jump height / Contact time / RSI band (card + video). */
+export function drawMetricsBand(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  metrics: JumpOverlayMetrics,
+  opacity = 1,
+): { y: number; h: number } {
+  const band = metricsBandRect(width, height);
+  if (!(opacity > 0)) return { y: band.y, h: band.h };
+
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, Math.max(0, opacity));
+  ctx.fillStyle = "rgba(8, 8, 10, 0.72)";
+  ctx.fillRect(band.x, band.y, band.w, band.h);
+
+  const cols = [
+    { label: "Jump height", value: `${metrics.heightIn.toFixed(1)} in` },
+    { label: "Contact time", value: `${Math.round(metrics.gctMs)} ms` },
+    { label: "RSI", value: metrics.rsi.toFixed(2) },
+  ];
+  const colW = band.w / 3;
+  const labelPx = Math.max(11, Math.round(width * 0.028));
+  const valuePx = Math.max(20, Math.round(width * 0.055));
+  cols.forEach((col, i) => {
+    const cx = band.x + colW * i + colW / 2;
+    ctx.fillStyle = "rgba(245, 245, 245, 0.85)";
+    ctx.font = `600 ${labelPx}px Outfit, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(col.label, cx, band.y + band.h * 0.36);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `700 ${valuePx}px "Barlow Condensed", sans-serif`;
+    ctx.fillText(col.value, cx, band.y + band.h * 0.78);
+    if (i > 0) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(band.x + colW * i, band.y + band.h * 0.18);
+      ctx.lineTo(band.x + colW * i, band.y + band.h * 0.82);
+      ctx.stroke();
+    }
+  });
+  ctx.restore();
+  return { y: band.y, h: band.h };
+}
+
 function drawApexHeight(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -202,10 +286,12 @@ function drawApexHeight(
   const x = heel.x;
   const lineWidth = Math.max(3, width * 0.008);
   const tick = Math.max(12, width * 0.032);
+  const band = metricsBandRect(width, height);
+  const bandBottom = band.y + band.h + 8;
+  const bottomLimit = height * (1 - METRICS_SAFE.bottomClear);
 
   ctx.save();
   ctx.lineCap = "round";
-  // Dark outline
   ctx.strokeStyle = OVERLAY.apexOutline;
   ctx.lineWidth = lineWidth + 2.5;
   ctx.beginPath();
@@ -216,7 +302,6 @@ function drawApexHeight(
   ctx.moveTo(x - tick, floorY);
   ctx.lineTo(x + tick, floorY);
   ctx.stroke();
-  // Bright lime
   ctx.strokeStyle = OVERLAY.apex;
   ctx.lineWidth = lineWidth;
   ctx.beginPath();
@@ -232,14 +317,17 @@ function drawApexHeight(
   const fontPx = Math.max(15, Math.round(width * 0.048));
   ctx.font = `700 ${fontPx}px "Barlow Condensed", "Arial Narrow", sans-serif`;
   const padX = 8;
-  const metrics = ctx.measureText(tag);
-  const boxW = metrics.width + padX * 2;
+  const textW = ctx.measureText(tag).width;
+  const boxW = textW + padX * 2;
   const boxH = Math.max(24, width * 0.058);
   let boxX = x + tick + 6;
   let boxY = (floorY + heel.y) / 2 - boxH / 2;
   if (boxX + boxW > width - 4) boxX = x - tick - 6 - boxW;
   boxX = Math.max(4, Math.min(width - boxW - 4, boxX));
-  boxY = Math.max(4, Math.min(height - boxH - 4, boxY));
+  // Keep height label out of the metrics band and out of the bottom crop zone.
+  if (boxY < bandBottom) boxY = bandBottom;
+  if (boxY + boxH > bottomLimit) boxY = Math.max(bandBottom, bottomLimit - boxH);
+  boxY = Math.max(bandBottom, Math.min(height - boxH - 4, boxY));
   ctx.fillStyle = OVERLAY.labelBack;
   ctx.fillRect(boxX, boxY, boxW, boxH);
   ctx.strokeStyle = OVERLAY.apexOutline;
@@ -255,14 +343,18 @@ function drawApexHeight(
 /**
  * Moving heel dot + growing faint trail; apex floor→heel line + height label
  * when at/after apex (or always when currentFrame is null — jump card).
- * Shared by on-screen, PNG card, and video export.
+ * Optional on-image metrics band (Instagram-safe). Shared by screen/card/video.
  */
 export function drawFootOverlay(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   model: JumpOverlayModel,
-  options: { showTags?: boolean; currentFrame?: number | null } = {},
+  options: {
+    showTags?: boolean;
+    currentFrame?: number | null;
+    metrics?: JumpOverlayMetrics | null;
+  } = {},
 ): void {
   void options.showTags;
   const px = (p: FootPoint) => ({ x: p.x * width, y: p.y * height });
@@ -270,6 +362,11 @@ export function drawFootOverlay(
   const through = fullTrail ? model.landing : options.currentFrame!;
   const trail = heelTrailThrough(model.heelPath, through);
   const trailWidth = Math.max(1.25, width * 0.0035);
+
+  if (options.metrics) {
+    const opacity = metricsBandOpacity(options.currentFrame, model.takeoff);
+    drawMetricsBand(ctx, width, height, options.metrics, opacity);
+  }
 
   if (trail.length >= 2) {
     const n = trail.length - 1;
@@ -303,52 +400,9 @@ export function drawFootOverlay(
   }
 }
 
-/** Draw Jump height / Contact time / RSI strip (used by card + video end). */
-export function drawMetricsStrip(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  tableH: number,
-  metrics: JumpOverlayMetrics,
-): void {
-  ctx.fillStyle = "#f3f0e7";
-  ctx.fillRect(x, y, width, tableH);
-  ctx.strokeStyle = "#e2dccf";
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + width, y);
-  ctx.stroke();
-
-  const cols = [
-    { label: "Jump height", value: `${metrics.heightIn.toFixed(1)} in` },
-    { label: "Contact time", value: `${Math.round(metrics.gctMs)} ms` },
-    { label: "RSI", value: metrics.rsi.toFixed(2) },
-  ];
-  const colW = width / 3;
-  cols.forEach((col, i) => {
-    const cx = x + colW * i + colW / 2;
-    ctx.fillStyle = "#6d675c";
-    ctx.font = `600 ${Math.max(11, Math.round(width * 0.028))}px Outfit, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillText(col.label, cx, y + tableH * 0.38);
-    ctx.fillStyle = "#1c1914";
-    ctx.font = `600 ${Math.max(18, Math.round(width * 0.055))}px "Barlow Condensed", sans-serif`;
-    ctx.fillText(col.value, cx, y + tableH * 0.72);
-    if (i > 0) {
-      ctx.strokeStyle = "#e2dccf";
-      ctx.beginPath();
-      ctx.moveTo(x + colW * i, y + 12);
-      ctx.lineTo(x + colW * i, y + tableH - 12);
-      ctx.stroke();
-    }
-  });
-}
-
 /**
- * Compose export card: video frame + overlays on top, metrics table below.
- * Full trail + apex annotation (currentFrame omitted).
+ * Compose export card: video frame + overlays + on-image metrics band.
+ * Canvas matches the frame (no bottom table). Full trail + apex.
  */
 export function composeJumpCardPng(
   videoFrame: CanvasImageSource,
@@ -357,18 +411,16 @@ export function composeJumpCardPng(
   model: JumpOverlayModel,
   metrics: JumpOverlayMetrics,
 ): Blob | null {
-  const tableH = Math.max(96, Math.round(frameW * 0.18));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, frameW);
-  canvas.height = Math.max(1, frameH + tableH);
+  canvas.height = Math.max(1, frameH);
   const ctx = canvas.getContext("2d");
   if (!ctx) return null;
 
   ctx.fillStyle = "#1c1914";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(videoFrame, 0, 0, frameW, frameH);
-  drawFootOverlay(ctx, frameW, frameH, model, { currentFrame: null });
-  drawMetricsStrip(ctx, 0, frameH, frameW, tableH, metrics);
+  drawFootOverlay(ctx, frameW, frameH, model, { currentFrame: null, metrics });
 
   const dataUrl = canvas.toDataURL("image/png");
   const comma = dataUrl.indexOf(",");
