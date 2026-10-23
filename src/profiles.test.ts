@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { GITHUB_TOKEN_KEY } from "./githubSync.ts";
 import {
   BYRON_PROFILE_ID,
+  STALE_LOGIN_MS,
   bootProfiles,
   createProfile,
   createProfileStore,
@@ -10,8 +11,10 @@ import {
   loadProfiles,
   migrateLegacyToByron,
   profileReadsKey,
+  recordProfileLogin,
   renameProfile,
   scopedKey,
+  shouldOpenOnProfiles,
   switchProfile,
 } from "./profiles.ts";
 import { STORAGE_KEY } from "./storage.ts";
@@ -154,5 +157,18 @@ describe("first-time empty device", () => {
     expect(boot.needsCreatePrompt).toBe(true);
     expect(boot.store).toBeNull();
     expect(boot.profiles).toEqual([]);
+  });
+});
+
+describe("profile login gate", () => {
+  it("opens on Profiles for first visit and after a long idle", () => {
+    const root = memoryStore();
+    expect(shouldOpenOnProfiles(root)).toBe(true);
+    migrateLegacyToByron(root);
+    expect(shouldOpenOnProfiles(root)).toBe(true); // never logged in yet
+    const t0 = 1_700_000_000_000;
+    recordProfileLogin(root, t0);
+    expect(shouldOpenOnProfiles(root, t0 + 60_000)).toBe(false);
+    expect(shouldOpenOnProfiles(root, t0 + STALE_LOGIN_MS + 1)).toBe(true);
   });
 });

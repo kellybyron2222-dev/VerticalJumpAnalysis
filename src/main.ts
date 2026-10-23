@@ -121,7 +121,9 @@ import {
   deleteProfile,
   getActiveProfile,
   loadProfiles,
+  recordProfileLogin,
   renameProfile,
+  shouldOpenOnProfiles,
   switchProfile,
   VISITED_KEY,
   type Profile,
@@ -384,9 +386,8 @@ must<HTMLButtonElement>("#profile-create").addEventListener("click", () => {
   try {
     const profile = createProfile(rootStorage, input.value, { allowGithub: false });
     input.value = "";
-    bindActiveStore(profile);
-    status.textContent = `Created ${profile.name}.`;
-    renderProfilesUi();
+    loginToProfile(profile);
+    status.textContent = `Welcome, ${profile.name}.`;
   } catch (error) {
     status.textContent = error instanceof Error ? error.message : String(error);
   }
@@ -552,15 +553,13 @@ boxTestSubmit.addEventListener("click", () => submitBoxTest());
 renderBoxTestRows();
 initMasterLogUi();
 updateProfileChrome();
-if (bootState.needsCreatePrompt || !activeProfile) {
-  profileCreatePrompt.hidden = false;
-  guide.hidden = true;
-  analyze.hidden = true;
-  screenBox.hidden = true;
-  screenMaster.hidden = true;
-  screenProfiles.hidden = true;
+profileCreatePrompt.hidden = true;
+// Always land on Profiles for first-time / no login / stale session — tap a name to continue.
+if (bootState.needsCreatePrompt || !activeProfile || shouldOpenOnProfiles(rootStorage)) {
+  profileActiveLabel.textContent = "Choose a profile";
+  profileEyebrow.textContent = "Jump Lab";
+  showScreen("profiles");
 } else {
-  profileCreatePrompt.hidden = true;
   const firstVisit = store.getItem(VISITED_KEY) !== "1";
   showScreen(firstVisit ? "directions" : "analyze");
   renderTrials();
@@ -1062,42 +1061,56 @@ function bindActiveStore(profile: Profile): void {
   renderGithubSyncStatus();
 }
 
+function loginToProfile(profile: Profile): void {
+  switchProfile(rootStorage, profile.id);
+  bindActiveStore(profile);
+  recordProfileLogin(rootStorage);
+  profileCreatePrompt.hidden = true;
+  const firstVisit = store.getItem(VISITED_KEY) !== "1";
+  showScreen(firstVisit ? "directions" : "analyze");
+  renderTrials();
+  render();
+}
+
 function renderProfilesUi(): void {
   const list = must<HTMLElement>("#profiles-list");
   const status = must<HTMLElement>("#profiles-status");
-  status.textContent = "";
+  const profiles = loadProfiles(rootStorage);
+  status.textContent = profiles.length
+    ? "Tap your name to continue."
+    : "Create a profile to get started.";
   list.replaceChildren();
-  for (const profile of loadProfiles(rootStorage)) {
+  for (const profile of profiles) {
     const li = document.createElement("li");
     li.className = "profile-row";
-    const title = document.createElement("p");
-    title.className = "profile-row-title";
-    title.textContent =
-      profile.name +
-      (profile.id === activeProfile?.id ? " (active)" : "") +
-      (profile.allowGithub ? " · GitHub" : "");
+    const login = document.createElement("button");
+    login.type = "button";
+    login.className = "profile-login";
+    const nameEl = document.createElement("span");
+    nameEl.className = "profile-login-name";
+    nameEl.textContent = profile.name;
+    const meta = document.createElement("span");
+    meta.className = "profile-login-meta";
+    meta.textContent =
+      (profile.id === activeProfile?.id ? "Last used · " : "") +
+      (profile.allowGithub ? "GitHub · " : "") +
+      "Tap to log in";
+    login.append(nameEl, meta);
+    login.addEventListener("click", () => {
+      try {
+        loginToProfile(profile);
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : String(error);
+      }
+    });
     const actions = document.createElement("div");
     actions.className = "profile-row-actions";
-    if (profile.id !== activeProfile?.id) {
-      const use = document.createElement("button");
-      use.type = "button";
-      use.textContent = "Switch";
-      use.addEventListener("click", () => {
-        try {
-          bindActiveStore(switchProfile(rootStorage, profile.id));
-          status.textContent = `Switched to ${profile.name}.`;
-          renderProfilesUi();
-        } catch (error) {
-          status.textContent = error instanceof Error ? error.message : String(error);
-        }
-      });
-      actions.append(use);
-    }
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "text-button";
     renameBtn.textContent = "Rename";
-    renameBtn.addEventListener("click", () => {
+    renameBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
       const next = prompt("Rename profile", profile.name);
       if (next === null) return;
       try {
@@ -1117,7 +1130,8 @@ function renderProfilesUi(): void {
     del.type = "button";
     del.className = "text-button";
     del.textContent = "Delete";
-    del.addEventListener("click", () => {
+    del.addEventListener("click", (event) => {
+      event.stopPropagation();
       if (
         !confirm(
           `Delete profile “${profile.name}” and all its jumps on this device? This cannot be undone.`,
@@ -1126,29 +1140,34 @@ function renderProfilesUi(): void {
         return;
       }
       try {
-        const state = deleteProfile(rootStorage, profile.id);
+        deleteProfile(rootStorage, profile.id);
         const next = getActiveProfile(rootStorage);
-        if (!next) throw new Error("No profile left.");
-        bindActiveStore(next);
-        status.textContent = `Deleted ${profile.name}. Active: ${next.name}.`;
+        if (next) {
+          // Stay on Profiles — user must tap to log in again.
+          activeProfile = next;
+          store = createProfileStore(rootStorage, next.id);
+          updateProfileChrome();
+          profileActiveLabel.textContent = "Choose a profile";
+          profileEyebrow.textContent = "Jump Lab";
+        } else {
+          activeProfile = null;
+          updateProfileChrome();
+        }
+        status.textContent = `Deleted ${profile.name}.`;
         renderProfilesUi();
-        void state;
       } catch (error) {
         status.textContent = error instanceof Error ? error.message : String(error);
       }
     });
     actions.append(del);
-    li.append(title, actions);
+    li.append(login, actions);
     list.append(li);
   }
 }
 
 function finishFirstProfile(name: string): void {
   const profile = createProfile(rootStorage, name, { allowGithub: false });
-  bindActiveStore(profile);
-  profileCreatePrompt.hidden = true;
-  const firstVisit = store.getItem(VISITED_KEY) !== "1";
-  showScreen(firstVisit ? "directions" : "analyze");
+  loginToProfile(profile);
 }
 
 function closeMenu(): void {

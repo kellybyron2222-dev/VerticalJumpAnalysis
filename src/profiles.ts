@@ -9,6 +9,10 @@ import { STORAGE_KEY, type KeyValueStore } from "./storage.ts";
 
 export const PROFILES_KEY = "jumpLab.profiles.v1";
 export const ACTIVE_PROFILE_KEY = "jumpLab.activeProfileId.v1";
+/** Global last “logged in” timestamp (ms). Not namespaced — gates the app open. */
+export const LAST_LOGIN_AT_KEY = "jumpLab.lastProfileLoginAt.v1";
+/** Re-prompt for a profile after this idle time (shared phone). */
+export const STALE_LOGIN_MS = 12 * 60 * 60 * 1000;
 export const BYRON_PROFILE_ID = "byron";
 export const DEFAULT_BYRON_NAME = "Byron";
 export const VISITED_KEY = "jumpLab.visited.v1";
@@ -114,6 +118,40 @@ export function loadActiveProfileId(root: KeyValueStore): string | null {
 
 export function saveActiveProfileId(root: KeyValueStore, id: string): void {
   root.setItem(ACTIVE_PROFILE_KEY, id);
+}
+
+export function recordProfileLogin(root: KeyValueStore, nowMs = Date.now()): void {
+  try {
+    root.setItem(LAST_LOGIN_AT_KEY, String(nowMs));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function loadLastLoginAt(root: KeyValueStore): number | null {
+  try {
+    const raw = root.getItem(LAST_LOGIN_AT_KEY);
+    if (raw === null || raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open on the Profiles screen when there are no profiles yet, never logged in,
+ * or the last login is older than STALE_LOGIN_MS.
+ */
+export function shouldOpenOnProfiles(
+  root: KeyValueStore,
+  nowMs = Date.now(),
+  staleMs = STALE_LOGIN_MS,
+): boolean {
+  if (loadProfiles(root).length === 0) return true;
+  const last = loadLastLoginAt(root);
+  if (last === null) return true;
+  return nowMs - last >= staleMs;
 }
 
 export function getActiveProfile(root: KeyValueStore): Profile | null {
