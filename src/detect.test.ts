@@ -98,4 +98,48 @@ describe("detectEvents", () => {
   it("needs enough samples", () => {
     expect(groundModel([{ frame: 0, footY: 0.5 }])).toBeNull();
   });
+
+  it("finds a jump that starts mid-drop at frame 0 (no standing before)", () => {
+    // Recording begins already falling; touchdown at 40, takeoff 90, landing 200.
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame < 320; frame += 1) {
+      let footY: number;
+      if (frame < 40) {
+        footY = BOX + 0.05 + ((FLOOR - 0.05 - (BOX + 0.05)) * frame) / 40;
+      } else if (frame < 90) footY = FLOOR;
+      else if (frame < 200) {
+        const t = (frame - 90) / 110;
+        footY = FLOOR - 0.05 - 0.2 * 4 * t * (1 - t);
+      } else footY = FLOOR;
+      samples.push({ frame, footY });
+    }
+    const result = detectEvents(samples);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.events.touchdown).toBe(40);
+    expect(result.events.takeoff).toBe(90);
+    expect(result.events.landing).toBe(200);
+  });
+
+  it("finds a mid-drop jump from a hip/knee proxy signal (dark feet)", () => {
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame < 320; frame += 1) {
+      // Hip-like signal: lower in frame when standing, rises in flight.
+      let hipY: number;
+      if (frame < 40) hipY = 0.55 + (0.12 * frame) / 40;
+      else if (frame < 90) hipY = 0.72;
+      else if (frame < 200) {
+        const t = (frame - 90) / 110;
+        hipY = 0.72 - 0.22 * 4 * t * (1 - t);
+      } else hipY = 0.72;
+      const footY = Math.min(0.98, hipY + 0.28);
+      samples.push({ frame, footY, hipY });
+    }
+    const result = detectEvents(samples);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.events.touchdown).toBeLessThan(60);
+    expect(result.events.takeoff).toBeGreaterThan(result.events.touchdown);
+    expect(result.events.landing).toBeGreaterThan(result.events.takeoff);
+  });
 });

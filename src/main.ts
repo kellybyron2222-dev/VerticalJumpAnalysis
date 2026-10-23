@@ -1074,7 +1074,8 @@ async function runDetection(): Promise<void> {
       return;
     }
     if (!result.ok) {
-      detectStatus.textContent = `Auto-detect failed: ${result.reason} Mark the frames by hand.`;
+      detectStatus.textContent = `Auto-detect failed: ${result.reason}`;
+      multiJumpPanel.hidden = true;
       return;
     }
     const stretch = activeStretch();
@@ -1106,7 +1107,9 @@ async function runDetection(): Promise<void> {
     detectStatus.textContent = `Found ${jumps.length} jumps. Review the set below, then save included jumps.`;
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
-    else detectStatus.textContent = `Auto-detect failed: ${error instanceof Error ? error.message : String(error)}`;
+    else {
+      detectStatus.textContent = `Auto-detect failed: ${error instanceof Error ? error.message : String(error)}. Mark touchdown, takeoff, and landing by hand.`;
+    }
   } finally {
     if (detecting === controller) {
       detecting = null;

@@ -49,6 +49,17 @@ describe("multi-jump segmentation", () => {
     const multi = detectAllEvents(samples, { maxJumps: 1 });
     expect(multi.ok && multi.jumps).toHaveLength(1);
   });
+
+  it("does not require a pre-jump stand for the first cycle (mid-drop start)", () => {
+    const samples = oneJump(40, 90, 200, 0, 320).filter((s) => s.frame >= 0);
+    // Strip the on-box lead-in: keep only mid-fall onward.
+    const mid = samples.filter((s) => s.frame >= 10);
+    const multi = detectAllEvents(mid, { maxJumps: 2, minStandFrames: 12 });
+    expect(multi.ok).toBe(true);
+    if (!multi.ok) return;
+    expect(multi.jumps.length).toBeGreaterThanOrEqual(1);
+    expect(multi.jumps[0]!.touchdown).toBeGreaterThanOrEqual(40);
+  });
 });
 
 describe("slowed regions from IMG_0228 pts", () => {

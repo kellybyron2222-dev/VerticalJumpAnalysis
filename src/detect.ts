@@ -1,12 +1,15 @@
 /**
- * One pose sample. `footY` is the lowest visible foot point in normalized
- * image coordinates (0 = top, 1 = bottom), so a larger value is closer to the floor.
+ * One pose sample. `footY` is the contact signal in normalized image
+ * coordinates (0 = top, 1 = bottom): lowest visible foot/ankle/heel, or a
+ * hip/knee proxy when feet are not confident (dark shoes on dark floor).
  */
 export interface FootSample {
   frame: number;
   footY: number;
   /** Lowest point of the higher foot, when both feet are visible. The trailing foot leaves the box last. */
   upperFootY?: number;
+  /** Mid-hip Y when available (larger = lower in frame). */
+  hipY?: number;
 }
 
 export interface GroundModel {
@@ -37,13 +40,16 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
   for (const sample of samples) {
     if (Number.isFinite(sample.frame) && Number.isFinite(sample.footY)) {
       const frame = Math.round(sample.frame);
-      const upper = sample.upperFootY;
-      byFrame.set(
+      const prev = byFrame.get(frame);
+      byFrame.set(frame, {
         frame,
-        upper !== undefined && Number.isFinite(upper)
-          ? { frame, footY: sample.footY, upperFootY: upper }
-          : { frame, footY: sample.footY },
-      );
+        footY: sample.footY,
+        upperFootY:
+          sample.upperFootY !== undefined && Number.isFinite(sample.upperFootY)
+            ? sample.upperFootY
+            : prev?.upperFootY,
+        hipY: sample.hipY !== undefined && Number.isFinite(sample.hipY) ? sample.hipY : prev?.hipY,
+      });
     }
   }
   return [...byFrame.values()].sort((a, b) => a.frame - b.frame);
@@ -70,22 +76,26 @@ function findStepOff(ordered: readonly FootSample[], tdIndex: number, ground: nu
 function quantile(values: readonly number[], q: number): number {
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))));
-  return sorted[index];
+  return sorted[index]!;
 }
 
 /**
- * Floor level is a high quantile of foot height rather than the max, so one
- * bad landmark below the floor does not move it.
+ * Floor level is a high quantile of the contact signal. Prefer the latter
+ * part of the clip so a mid-drop start (already falling at frame 0) does not
+ * pull the floor estimate up toward the box.
  */
 export function groundModel(samples: readonly FootSample[]): GroundModel | null {
   const ordered = sortedSamples(samples);
   if (ordered.length < MIN_SAMPLES) return null;
   const ys = ordered.map((sample) => sample.footY);
-  const ground = quantile(ys, 0.9);
+  const tailStart = Math.floor(ys.length * 0.35);
+  const floorSource = ys.length - tailStart >= 6 ? ys.slice(tailStart) : ys;
+  const ground = quantile(floorSource, 0.9);
   const head = ys.slice(0, Math.max(3, Math.floor(ys.length * 0.1)));
   const start = quantile(head, 0.5);
   const drop = ground - start;
-  const tolerance = Math.min(0.03, Math.max(0.006, drop * 0.15));
+  // Mid-drop starts have a small apparent drop; keep a usable contact band.
+  const tolerance = Math.min(0.045, Math.max(0.012, Math.abs(drop) * 0.25 || 0.02));
   return { ground, start, tolerance };
 }
 
@@ -103,7 +113,7 @@ function contactHelpers(ordered: readonly FootSample[], onGround: readonly boole
       if (index >= ordered.length) return index;
       const back = nextContact(index);
       const lastAirFrame = back < ordered.length ? ordered[back].frame : Infinity;
-      if (lastAirFrame - ordered[index].frame >= minAirFrames) return index;
+      if (lastAirFrame - ordered[index]!.frame >= minAirFrames) return index;
       index = back;
     }
     return index;
@@ -129,28 +139,81 @@ function findStepOffInRange(
   if (drop < 0.02) return null;
   const tolerance = Math.min(0.01, Math.max(0.003, drop * 0.03));
   for (let k = tdIndex - 1; k >= fromIndex; k -= 1) {
-    if (level(ordered[k]) <= box + tolerance) return ordered[k].frame;
+    if (level(ordered[k]!) <= box + tolerance) return ordered[k]!.frame;
   }
   return null;
 }
 
+function buildOnGround(ordered: readonly FootSample[], model: GroundModel): boolean[] {
+  return ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
+}
+
 /**
- * Finds the first floor contact after leaving the box, the takeoff from it,
- * and the next floor contact. Frames are the first frame of each state:
- * touchdown and landing are the first frames on the floor, takeoff is the
- * first frame off it. Output depends only on the samples, so identical input
- * always gives identical marks.
+ * Classic single-jump detector. Handles clips that start mid-drop (already
+ * in the air at frame 0) — no standing period is required before touchdown.
  */
 export function detectEvents(
   samples: readonly FootSample[],
   fixedModel?: GroundModel,
   minAirFrames = 6,
 ): Detection {
-  const all = detectAllEvents(samples, { fixedModel, minAirFrames, maxJumps: 1 });
-  if (!all.ok) return all;
-  const events = all.jumps[0];
-  if (!events) return { ok: false, reason: "No jump found." };
-  return { ok: true, model: all.model, events };
+  const ordered = sortedSamples(samples);
+  const model = fixedModel ?? groundModel(ordered);
+  if (!model) {
+    return {
+      ok: false,
+      reason:
+        "Not enough pose samples with a visible body. Try again, or mark touchdown, takeoff, and landing by hand.",
+    };
+  }
+
+  const onGround = buildOnGround(ordered, model);
+  const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
+
+  // Start mid-air (common when the recording begins at step-off): do not skip.
+  // Start on the box/floor: skip to the first leave, then find touchdown.
+  let i = 0;
+  while (i < ordered.length && onGround[i]) i += 1;
+  if (i === ordered.length) {
+    return {
+      ok: false,
+      reason:
+        "Could not see the feet leave the floor. Mark step-off, touchdown, takeoff, and landing by hand.",
+    };
+  }
+
+  const tdIndex = nextContact(i);
+  if (tdIndex >= ordered.length) {
+    return {
+      ok: false,
+      reason: "No touchdown found. Mark touchdown, takeoff, and landing by hand.",
+    };
+  }
+  const toIndex = nextAir(tdIndex);
+  if (toIndex >= ordered.length) {
+    return {
+      ok: false,
+      reason: "No takeoff found after contact. Mark takeoff and landing by hand.",
+    };
+  }
+  const ldIndex = nextContact(toIndex);
+  if (ldIndex >= ordered.length) {
+    return {
+      ok: false,
+      reason: "No landing found after the flight. Mark landing by hand.",
+    };
+  }
+
+  return {
+    ok: true,
+    model,
+    events: {
+      stepOff: findStepOff(ordered, tdIndex, model.ground),
+      touchdown: ordered[tdIndex]!.frame,
+      takeoff: ordered[toIndex]!.frame,
+      landing: ordered[ldIndex]!.frame,
+    },
+  };
 }
 
 export type MultiDetection =
@@ -159,7 +222,7 @@ export type MultiDetection =
 
 /**
  * Find every drop/depth cycle in one clip. Splits between jumps on standing
- * periods after landing (minStandFrames on the floor before the next leave).
+ * periods after landing. Not used for single-jump clips (see detectEvents).
  */
 export function detectAllEvents(
   samples: readonly FootSample[],
@@ -175,9 +238,15 @@ export function detectAllEvents(
   const maxJumps = options.maxJumps ?? 8;
   const ordered = sortedSamples(samples);
   const model = options.fixedModel ?? groundModel(ordered);
-  if (!model) return { ok: false, reason: "Not enough frames with a visible foot." };
+  if (!model) {
+    return {
+      ok: false,
+      reason:
+        "Not enough pose samples with a visible body. Try again, or mark events by hand.",
+    };
+  }
 
-  const onGround = ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
+  const onGround = buildOnGround(ordered, model);
   const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
   const jumps: DetectedEvents[] = [];
   let i = 0;
@@ -196,12 +265,11 @@ export function detectAllEvents(
 
     jumps.push({
       stepOff: findStepOffInRange(ordered, tdIndex, searchFrom, model.ground),
-      touchdown: ordered[tdIndex].frame,
-      takeoff: ordered[toIndex].frame,
-      landing: ordered[ldIndex].frame,
+      touchdown: ordered[tdIndex]!.frame,
+      takeoff: ordered[toIndex]!.frame,
+      landing: ordered[ldIndex]!.frame,
     });
 
-    // Standing run after landing separates jumps.
     let stand = 0;
     let j = ldIndex;
     while (j < ordered.length && onGround[j]) {
@@ -210,14 +278,18 @@ export function detectAllEvents(
     }
     searchFrom = ldIndex;
     if (stand < minStandFrames) {
-      // Not enough still time — continue after this landing without treating the next leave as a clean split.
       i = Math.min(ordered.length, ldIndex + 1);
       continue;
     }
     i = ldIndex;
   }
 
-  if (jumps.length === 0) return { ok: false, reason: "No jump found." };
+  if (jumps.length === 0) {
+    return {
+      ok: false,
+      reason: "No jump cycle found. Mark touchdown, takeoff, and landing by hand.",
+    };
+  }
   return { ok: true, model, jumps };
 }
 
