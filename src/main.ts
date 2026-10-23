@@ -20,7 +20,14 @@ import { trialFormError } from "./form.ts";
 import { collectFrameTimes, transportEnabledAfterClockRead } from "./cadence.ts";
 import { parseMovClip } from "./mov.ts";
 import { analyzeMultiClip } from "./pose.ts";
+import type { FootSample } from "./detect.ts";
 import { formatDetectDiagnostics, type DetectDiagnostics } from "./detectDiag.ts";
+import {
+  buildJumpOverlayModel,
+  composeJumpCardPng,
+  drawFootOverlay,
+  type JumpOverlayModel,
+} from "./jumpOverlay.ts";
 import {
   buildMultiJumpRows,
   createSetId,
@@ -159,8 +166,15 @@ type AppScreen = "directions" | "box" | "analyze" | "master" | "profiles";
 const videoInput = must<HTMLInputElement>("#video-input");
 const video = must<HTMLVideoElement>("#video");
 const videoStatus = must<HTMLElement>("#video-status");
+const jumpOverlayCanvas = must<HTMLCanvasElement>("#jump-overlay");
+const overlayTools = must<HTMLElement>("#overlay-tools");
+const showFootPath = must<HTMLInputElement>("#show-foot-path");
+const exportJumpCardBtn = must<HTMLButtonElement>("#export-jump-card");
+const overlayStatus = must<HTMLElement>("#overlay-status");
 const emptyVideo = must<HTMLElement>("#empty-video");
 const player = must<HTMLElement>("#player");
+let poseSamples: FootSample[] = [];
+let jumpOverlay: JumpOverlayModel | null = null;
 const clipName = must<HTMLElement>("#clip-name");
 const frameLabel = must<HTMLElement>("#frame-label");
 const totalLabel = must<HTMLElement>("#total-label");
@@ -1268,6 +1282,11 @@ function loadFile(file: File): void {
   cancelDetect.hidden = true;
   detectStatus.textContent = "";
   showDetectDiagnostics(null);
+  poseSamples = [];
+  jumpOverlay = null;
+  overlayTools.hidden = true;
+  overlayStatus.textContent = "";
+  jumpOverlayCanvas.hidden = true;
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
   const generation = loadGeneration;
@@ -1458,6 +1477,8 @@ async function runDetection(): Promise<void> {
   showDetectDiagnostics(null);
   setCheckMarksFlag(false);
   setDetectProgress(0, "Starting…");
+  poseSamples = [];
+  jumpOverlay = null;
   try {
     const stretch = activeStretch();
     const result = await analyzeMultiClip({
@@ -1484,8 +1505,10 @@ async function runDetection(): Promise<void> {
         ? result.reason
         : `No plausible jump found. ${result.reason}`;
       multiJumpPanel.hidden = true;
+      refreshJumpOverlay();
       return;
     }
+    poseSamples = result.samples ?? [];
     const jumps = result.jumps.map((events) => ({
       ...events,
       stepOff: stepOffForFall(events.stepOff, events.touchdown, frameTimes ?? undefined, stretch),
@@ -1507,6 +1530,7 @@ async function runDetection(): Promise<void> {
           ? "Marks set — Check marks flagged. Use Go to / Set on each event."
           : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
       ) + warnSuffix;
+      refreshJumpOverlay();
       return;
     }
     multiJumpRows = buildMultiJumpRows(jumps, frameTimes ?? undefined, fps, stretch);
@@ -1522,6 +1546,7 @@ async function runDetection(): Promise<void> {
         ? `Found ${jumps.length} jumps — Check marks flagged. Review each one.`
         : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`
     ) + warnSuffix;
+    refreshJumpOverlay();
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
     else {
@@ -1791,6 +1816,123 @@ function render(): void {
       ? ""
       : `video estimate ~${formatHeightIn(estimate.heightIn)}, not used`;
   syncChips();
+  // Rebuild path when marks move; cheap if samples are already loaded.
+  if (poseSamples.length && marks.takeoff !== null && marks.landing !== null) {
+    refreshJumpOverlay();
+  } else {
+    paintJumpOverlay();
+  }
+}
+
+function refreshJumpOverlay(): void {
+  const stretch = activeStretch();
+  const fps = readFps();
+  const preview = previewMetrics({
+    touchdown: marks.touchdown,
+    takeoff: marks.takeoff,
+    landing: marks.landing,
+    fps: fps ?? 0,
+    slowMoFactor: stretch,
+    frameTimes: frameTimes ?? undefined,
+  });
+  if (
+    marks.takeoff === null ||
+    marks.landing === null ||
+    preview.heightIn === null ||
+    !poseSamples.length
+  ) {
+    jumpOverlay = null;
+  } else {
+    jumpOverlay = buildJumpOverlayModel(
+      poseSamples,
+      marks.takeoff,
+      marks.landing,
+      preview.heightIn,
+    );
+  }
+  overlayTools.hidden = !jumpOverlay;
+  exportJumpCardBtn.disabled = !jumpOverlay;
+  paintJumpOverlay();
+}
+
+function paintJumpOverlay(): void {
+  const ctx = jumpOverlayCanvas.getContext("2d");
+  if (!ctx) return;
+  const show = showFootPath.checked && jumpOverlay;
+  if (!show || !video.videoWidth) {
+    jumpOverlayCanvas.hidden = true;
+    ctx.clearRect(0, 0, jumpOverlayCanvas.width, jumpOverlayCanvas.height);
+    return;
+  }
+  const rect = video.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width * (window.devicePixelRatio || 1)));
+  const h = Math.max(1, Math.round(rect.height * (window.devicePixelRatio || 1)));
+  if (jumpOverlayCanvas.width !== w || jumpOverlayCanvas.height !== h) {
+    jumpOverlayCanvas.width = w;
+    jumpOverlayCanvas.height = h;
+  }
+  jumpOverlayCanvas.hidden = false;
+  ctx.clearRect(0, 0, w, h);
+  drawFootOverlay(ctx, w, h, jumpOverlay!, { currentFrame: frame });
+}
+
+showFootPath.addEventListener("change", () => paintJumpOverlay());
+exportJumpCardBtn.addEventListener("click", () => {
+  void exportJumpCard();
+});
+window.addEventListener("resize", () => paintJumpOverlay());
+
+async function exportJumpCard(): Promise<void> {
+  if (!jumpOverlay || !ready) {
+    overlayStatus.textContent = "Run auto-detect first so the foot path is available.";
+    return;
+  }
+  const stretch = activeStretch();
+  const fps = readFps();
+  const preview = previewMetrics({
+    touchdown: marks.touchdown,
+    takeoff: marks.takeoff,
+    landing: marks.landing,
+    fps: fps ?? 0,
+    slowMoFactor: stretch,
+    frameTimes: frameTimes ?? undefined,
+  });
+  if (preview.heightIn === null || preview.gctMs === null || preview.rsi === null) {
+    overlayStatus.textContent = "Need contact, flight, and height marks before export.";
+    return;
+  }
+  overlayStatus.textContent = "Building jump card…";
+  exportJumpCardBtn.disabled = true;
+  try {
+    await seeker.settle(jumpOverlay.apexFrame);
+    frame = jumpOverlay.apexFrame;
+    const w = video.videoWidth || 720;
+    const h = video.videoHeight || 1280;
+    const frameCanvas = document.createElement("canvas");
+    frameCanvas.width = w;
+    frameCanvas.height = h;
+    const fctx = frameCanvas.getContext("2d");
+    if (!fctx) throw new Error("Canvas unavailable.");
+    fctx.drawImage(video, 0, 0, w, h);
+    const model = {
+      ...jumpOverlay,
+      heightIn: preview.heightIn,
+    };
+    const blob = composeJumpCardPng(frameCanvas, w, h, model, {
+      heightIn: preview.heightIn,
+      gctMs: preview.gctMs,
+      rsi: preview.rsi,
+    });
+    if (!blob) throw new Error("Could not build PNG.");
+    const who = (activeProfile?.name ?? "jump").replace(/[^\w.-]+/g, "_");
+    await downloadBlob(blob, `jump-card-${who}-${stamp()}.png`);
+    overlayStatus.textContent = "Jump card ready — Share / Save to Files.";
+    render();
+  } catch (error) {
+    overlayStatus.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    exportJumpCardBtn.disabled = !jumpOverlay;
+  }
 }
 
 function renderMark(

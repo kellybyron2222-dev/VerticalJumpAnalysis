@@ -301,7 +301,19 @@
               preload="auto"
               disablepictureinpicture
             ></video>
+            <canvas id="jump-overlay" class="jump-overlay" hidden></canvas>
             <p id="video-status" class="video-status">Reading video…</p>
+          </div>
+
+          <div id="overlay-tools" class="overlay-tools" hidden>
+            <label class="high-accuracy" for="show-foot-path">
+              <input type="checkbox" id="show-foot-path" checked />
+              <span>Show foot path &amp; apex height tag</span>
+            </label>
+            <button type="button" id="export-jump-card" class="button-secondary">
+              Export jump card
+            </button>
+            <p id="overlay-status" class="detail" role="status"></p>
           </div>
 
           <p class="frame-readout">

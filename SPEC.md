@@ -96,6 +96,7 @@ Auto-detect (on-device only; video never uploads):
 - Flag (do not hide) any cycle with flight > 650 ms real or height > 30 in: "check LD mark: landing may be late".
 - Soft self-check: when a chosen cycle has contact outside 100–600 ms real or flight outside 150–800 ms, show a clear **Check marks** flag and keep manual Set/Go-to controls prominent (do not hide the jump).
 - Pose scan: decode frames capped ~480px on the long side before MediaPipe, reuse one canvas buffer, yield to the UI during the scan, and show a progress bar with ETA. Timing math is unchanged.
+- After a successful auto-detect, optional **foot path overlay**: tags along the contact foot, a line of the flight path, and an apex tag with jump height (in). **Export jump card** saves a PNG of the apex frame with that overlay and a small table under the video (Jump height, Contact time, RSI). On-device only; timing math unchanged.
 - Keep real-time plausibility gates: contact 80–1000 ms, flight ≥150 ms. If no plausible jump is found, say so and fall back to manual frame marking — never apply nonsense marks.
 
 ### Milestone 3 — Metrics, sessions, and box profile

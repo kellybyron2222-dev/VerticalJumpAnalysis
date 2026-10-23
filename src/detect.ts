@@ -15,6 +15,8 @@ import { realSecondsOnClock } from "./metrics.ts";
 export interface FootSample {
   frame: number;
   footY: number;
+  /** Image X of the contact foot (0–1), when known — used for path overlays. */
+  footX?: number;
   /** Lowest point of the higher foot, when both feet are visible. The trailing foot leaves the box last. */
   upperFootY?: number;
   /** Mid-hip Y when available (larger = lower in frame). */
@@ -77,6 +79,8 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
       byFrame.set(frame, {
         frame,
         footY: sample.footY,
+        footX:
+          sample.footX !== undefined && Number.isFinite(sample.footX) ? sample.footX : prev?.footX,
         upperFootY:
           sample.upperFootY !== undefined && Number.isFinite(sample.upperFootY)
             ? sample.upperFootY

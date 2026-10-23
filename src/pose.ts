@@ -75,6 +75,20 @@ function lowestPoint(
   return lowest;
 }
 
+function lowestPointXY(
+  landmarks: readonly NormalizedLandmark[],
+  indexes: readonly number[],
+  minVisibility: number,
+): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null;
+  for (const index of indexes) {
+    const point = landmarks[index];
+    if (!point || (point.visibility ?? 1) < minVisibility) continue;
+    if (!best || point.y > best.y) best = { x: point.x, y: point.y };
+  }
+  return best;
+}
+
 function meanPoint(
   landmarks: readonly NormalizedLandmark[],
   indexes: readonly number[],
@@ -202,20 +216,45 @@ export function sampleFromLandmarks(
   frame: number,
 ): FootSample | null {
   if (!landmarks?.length) return null;
-  const feet = lowestPoint(landmarks, ANKLE_HEEL, MIN_VISIBILITY);
-  const knees = lowestPoint(landmarks, KNEES, MIN_VISIBILITY_PROXY);
+  const feetXY = lowestPointXY(landmarks, ANKLE_HEEL, MIN_VISIBILITY);
+  const kneesXY = lowestPointXY(landmarks, KNEES, MIN_VISIBILITY_PROXY);
   const hip = meanPoint(landmarks, HIPS, MIN_VISIBILITY_PROXY);
+  const hipX = meanPointX(landmarks, HIPS, MIN_VISIBILITY_PROXY);
   const upper = upperFootY(landmarks);
 
-  let contact: number | null = feet;
-  if (contact === null && knees !== null) contact = knees;
-  if (contact === null && hip !== null) contact = Math.min(0.98, hip + 0.28);
+  let contact: number | null = feetXY?.y ?? null;
+  let contactX: number | null = feetXY?.x ?? null;
+  if (contact === null && kneesXY !== null) {
+    contact = kneesXY.y;
+    contactX = kneesXY.x;
+  }
+  if (contact === null && hip !== null) {
+    contact = Math.min(0.98, hip + 0.28);
+    contactX = hipX;
+  }
   if (contact === null) return null;
 
   const sample: FootSample = { frame, footY: contact };
+  if (contactX !== null) sample.footX = contactX;
   if (upper !== null) sample.upperFootY = upper;
   if (hip !== null) sample.hipY = hip;
   return sample;
+}
+
+function meanPointX(
+  landmarks: readonly NormalizedLandmark[],
+  indexes: readonly number[],
+  minVisibility: number,
+): number | null {
+  let sum = 0;
+  let n = 0;
+  for (const index of indexes) {
+    const point = landmarks[index];
+    if (!point || (point.visibility ?? 1) < minVisibility) continue;
+    sum += point.x;
+    n += 1;
+  }
+  return n > 0 ? sum / n : null;
 }
 
 export interface AnalyzeOptions {
@@ -558,12 +597,42 @@ export async function analyzeMultiClip(
     };
   }
 
+  // Dense-enough XY samples along the main flight for the foot-path overlay.
+  let pathSamples = merged;
+  const main = resolved.jumps[0];
+  if (main) {
+    const flightSpan = main.landing - main.takeoff;
+    const pathStep = flightSpan > 120 ? 3 : flightSpan > 60 ? 2 : 1;
+    const pathFrames: number[] = [];
+    for (let f = main.takeoff; f <= main.landing; f += pathStep) pathFrames.push(f);
+    if (pathFrames[pathFrames.length - 1] !== main.landing) pathFrames.push(main.landing);
+    if (pathFrames.length > 2) {
+      onProgress(`Foot path ${pathFrames.length} frames…`, 0.96);
+      const pathPass = await sampleFrames(
+        landmarker,
+        video,
+        seeker,
+        pathFrames,
+        canvas,
+        context,
+        signal,
+        onProgress,
+        "Path",
+        finePass.lastCentroid,
+        0.96,
+        0.03,
+      );
+      pathSamples = [...merged, ...pathPass.samples];
+    }
+  }
+
   return {
     ok: true,
     jumps: resolved.jumps,
     model: jumpModel,
     lowConfidence: resolved.lowConfidence || resolved.warnings.length > 0,
     diagnostics: diagBase,
+    samples: pathSamples,
   };
 }
 
