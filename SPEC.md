@@ -8,7 +8,7 @@ Future work should follow this document. Do the milestones in order. Finish and 
 
 Milestone 1 is implemented: camera guide, local video, frame stepping, manual marks, provisional metrics, and on-phone trial storage. Milestone 2 is implemented (MediaPipe Pose Landmarker, per-frame image mode on CPU, every presentation frame of the chosen file; marks stay hand-correctable) but has not been verified on real iPhone clips. Milestone 3 is implemented: each saved clip is one jump (numbers only in localStorage), today’s session groups by jump type and box height with mean/best, and a date chart with one series per box height. Milestone 4 is implemented: weekly means vs prior-week baseline (provisional at 3+, established rolling-6 at 6+), CV noise, flags, manual re-baseline, raise-box ready/hold, box-profile retest reminder, and an optimal Box test (3–5 heights, tagged jumps, RSI/contact recommendation saved as working box; doubles as the 4-week retest). Milestone 5 is a Master log (all jumps, sortable, edit/delete) with Excel (.xlsx) and CSV export for paste into the Jump Test workbook, plus optional GitHub Contents sync of the same log onto a `data` branch (fine-grained token in localStorage only — no Microsoft/MSAL).
 
-Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: box height estimated from video, sanity warnings, and plain metric labels.
+Slow-mo timing fix (after Milestone 2): see "Slow-mo playback and real time" below. Also built with Milestone 3: selectable box height (video estimate is cross-check only), sanity warnings, and plain metric labels.
 
 ## Slow-mo playback and real time
 
@@ -19,11 +19,11 @@ iPhone slo-mo clips picked from the camera roll often arrive stretched in time: 
 - On load the app reads the file's sample table and does not play the clip to discover timestamps. `requestVideoFrameCallback` is only a fallback, and a hung or empty read leaves stepping and auto-detect enabled. A fallback `mediaTime` that sits past the played duration is shifted onto that duration.
 - Sanity warning when jump height is over 40 in or under 2 in, contact time is outside 80–1000 ms, or the jump height and the box-height estimate disagree (jump more than 6× the box estimate, or the box estimate more than 8× the jump). A ramp stretches the drop and the flight by different amounts, so those two heights stop matching.
 
-## Box height from video
+## Box height (selected, not from video)
 
-- A fourth, optional mark: step-off, the last frame with both feet on the box. Auto-detect finds it from the pose (the higher foot reaching box level, read from the first tenth of the clip, with a tight tolerance); it is hand-correctable like the other marks.
-- Free fall: airborne frames `stepOff + 1 … touchdown − 1`, so `t = (touchdown − stepOff − 1) / capture fps / slowMoFactor`, and `box height = g × t² / 2`.
-- Shown in inches and centimeters and labeled as an estimate. It pre-fills the box height field (rounded to 0.5 in) unless the user has typed or picked a value; the field stays editable.
+- Jump Analysis has a box height selector: 6, 8, 10, 12, 14, 16, 18 in, plus Custom. The selected value is what is saved on each jump (and multi-jump set), used for session/chart grouping, baseline, and raise-box. It is remembered in localStorage; default is 6 in for drop jumps.
+- A fourth, optional mark: step-off, the last frame with both feet on the box. Auto-detect finds it from the pose; it is hand-correctable like the other marks.
+- Free-fall from step-off can still compute a video box-height estimate (`g × t² / 2`), shown only as a small greyed cross-check (`video estimate ~X in, not used`). It must not pre-fill the selector or drive saved jumps, charts, baseline, raise-box, or the Optimal Box Height test.
 
 ## UI wording
 
@@ -92,7 +92,7 @@ Definitions (frame index is the source of truth; fps converts frames to time):
 
 Behavior:
 
-- Each analyzed clip saves as one jump (local numbers only): date, jump type, box height (auto-measured, editable), contact time, flight time, jump height, RSI.
+- Each analyzed clip saves as one jump (local numbers only): date, jump type, box height (from the selector), contact time, flight time, jump height, RSI.
 - Group the day’s jumps by jump type and box height. Show mean and best for each metric (target 3 jumps per session / box).
 - Chart jump height, contact time, and RSI by box height over weeks/sessions (simple SVG; readable on phone).
 - Unit tests cover session grouping and aggregation.

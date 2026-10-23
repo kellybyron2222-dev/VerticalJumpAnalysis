@@ -403,19 +403,22 @@
                 id="box-height"
                 type="number"
                 inputmode="decimal"
-                min="0"
+                min="0.5"
                 step="0.5"
-                placeholder="12"
+                value="6"
               />
             </label>
-            <p id="box-estimate" class="box-estimate" hidden></p>
             <div class="chips" id="box-chips">
               <button type="button" data-height="6">6</button>
+              <button type="button" data-height="8">8</button>
+              <button type="button" data-height="10">10</button>
               <button type="button" data-height="12">12</button>
+              <button type="button" data-height="14">14</button>
+              <button type="button" data-height="16">16</button>
               <button type="button" data-height="18">18</button>
-              <button type="button" data-height="24">24</button>
-              <button type="button" data-height="30">30</button>
+              <button type="button" data-custom="1">Custom</button>
             </div>
+            <p id="box-estimate" class="box-estimate" hidden></p>
 
             <fieldset>
               <legend>Arm swing</legend>

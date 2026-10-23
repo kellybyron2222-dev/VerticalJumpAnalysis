@@ -337,6 +337,14 @@ video {
   resize: vertical;
 }
 
+.box-estimate {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
 .transport {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

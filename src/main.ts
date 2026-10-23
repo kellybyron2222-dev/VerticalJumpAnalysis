@@ -40,6 +40,11 @@ import {
   stepOffForFall,
 } from "./timing.ts";
 import {
+  isBoxHeightPreset,
+  loadBoxHeightPref,
+  saveBoxHeightPref,
+} from "./boxHeightPref.ts";
+import {
   createTrial,
   loadTrials,
   saveTrials,
@@ -209,7 +214,6 @@ let pendingDeleteId: string | null = null;
 let detecting: AbortController | null = null;
 let factor = readFactor();
 let stretchTouched = false;
-let boxAutoFilled = false;
 let measuring = false;
 let loadGeneration = 0;
 let measuredUrl: string | null = null;
@@ -331,7 +335,6 @@ fpsInput.addEventListener("input", () => {
   seeker.setFps(fps);
   if (ready) setFrame(frame);
   else render();
-  maybePrefillBox();
 });
 
 scrubber.addEventListener("input", () => {
@@ -355,16 +358,25 @@ jumpForm.addEventListener("submit", (event) => {
   onSave();
 });
 jumpForm.addEventListener("input", clearFeedback);
+boxInput.value = String(loadBoxHeightPref(localStorage));
+syncChips();
 boxInput.addEventListener("input", () => {
-  boxAutoFilled = false;
+  const value = readBox();
+  if (value !== null) saveBoxHeightPref(localStorage, value);
   syncChips();
   render();
 });
 
 for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips button")) {
   chip.addEventListener("click", () => {
-    boxInput.value = chip.dataset.height ?? "";
-    boxAutoFilled = false;
+    if (chip.dataset.custom === "1") {
+      boxInput.focus();
+      boxInput.select();
+    } else {
+      boxInput.value = chip.dataset.height ?? String(loadBoxHeightPref(localStorage));
+      const value = readBox();
+      if (value !== null) saveBoxHeightPref(localStorage, value);
+    }
     render();
     syncChips();
     clearFeedback();
@@ -829,7 +841,7 @@ function submitBoxTest(): void {
     }
     saveWorkingBox(localStorage, jumpType, rec.recommendedBoxIn);
     boxInput.value = String(rec.recommendedBoxIn);
-    boxAutoFilled = false;
+    saveBoxHeightPref(localStorage, rec.recommendedBoxIn);
     syncChips();
     boxTestResult.hidden = false;
     boxTestResult.textContent = rec.message;
@@ -1046,20 +1058,6 @@ function applyFactor(next: number): void {
   factor = next;
   clearFeedback();
   render();
-  maybePrefillBox();
-}
-
-/** Fills the box field from the video estimate unless the user typed a value. */
-function maybePrefillBox(): void {
-  const fps = readFps();
-  if (fps === null || marks.stepOff === null || marks.touchdown === null) return;
-  if (boxInput.value.trim() !== "" && !boxAutoFilled) return;
-  const estimate = estimateBoxHeight(marks.stepOff, marks.touchdown, fps, activeStretch(), frameTimes ?? undefined);
-  if (!estimate) return;
-  boxInput.value = String(Math.round(estimate.heightIn * 2) / 2);
-  boxAutoFilled = true;
-  syncChips();
-  render();
 }
 
 async function runDetection(): Promise<void> {
@@ -1110,7 +1108,6 @@ async function runDetection(): Promise<void> {
       marks.takeoff = events.takeoff;
       marks.landing = events.landing;
       frame = events.touchdown;
-      maybePrefillBox();
       detectStatus.textContent = result.lowConfidence
         ? "Marks set but look off — check them with Go to / Set (see Advanced diagnostics)."
         : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
@@ -1124,7 +1121,6 @@ async function runDetection(): Promise<void> {
     marks.takeoff = first.takeoff;
     marks.landing = first.landing;
     frame = first.touchdown;
-    maybePrefillBox();
     detectStatus.textContent = result.lowConfidence
       ? `Found ${jumps.length} jumps but timings look off — check each one (see Advanced).`
       : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`;
@@ -1307,7 +1303,6 @@ function bindMark(
     marks[key] = frame;
     clearFeedback();
     render();
-    maybePrefillBox();
   });
   must<HTMLButtonElement>(gotoSelector).addEventListener("click", () => {
     const marked = marks[key];
@@ -1380,10 +1375,11 @@ function render(): void {
     fps === null || marks.stepOff === null || marks.touchdown === null
       ? null
       : estimateBoxHeight(marks.stepOff, marks.touchdown, fps, stretch, frameTimes ?? undefined);
+  const selectedBox = readBox();
   const warnings = sanityWarnings({
     heightIn: preview.heightIn,
     gctMs: preview.gctMs,
-    boxHeightIn: estimate?.heightIn ?? null,
+    boxHeightIn: selectedBox,
     fallSeconds: estimate?.fallSeconds ?? null,
   });
   metricsWarning.hidden = warnings.length === 0;
@@ -1394,7 +1390,7 @@ function render(): void {
   boxEstimate.textContent =
     estimate === null
       ? ""
-      : `Estimate from video (free fall ${formatMsValue(estimate.fallSeconds * 1000)} ms): ${formatHeightIn(estimate.heightIn)} · ${formatHeightCm(estimate.heightCm)}.${boxAutoFilled ? " Box height filled from this estimate. Edit it if you know the real height." : ""}`;
+      : `video estimate ~${formatHeightIn(estimate.heightIn)}, not used`;
   syncChips();
 }
 
@@ -1691,9 +1687,15 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
 }
 
 function syncChips(): void {
-  const current = boxInput.value.trim();
+  const value = readBox();
+  const preset =
+    value !== null && isBoxHeightPreset(value) ? String(value) : null;
   for (const chip of document.querySelectorAll<HTMLButtonElement>("#box-chips button")) {
-    chip.setAttribute("aria-pressed", String(chip.dataset.height === current));
+    if (chip.dataset.custom === "1") {
+      chip.setAttribute("aria-pressed", String(preset === null && value !== null));
+    } else {
+      chip.setAttribute("aria-pressed", String(chip.dataset.height === preset));
+    }
   }
   for (const chip of document.querySelectorAll<HTMLButtonElement>("#slowmo-chips button[data-factor]")) {
     chip.setAttribute("aria-pressed", String(Number(chip.dataset.factor) === factor));
