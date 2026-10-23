@@ -10,10 +10,12 @@ import {
   hasLegacyProfileData,
   loadProfiles,
   migrateLegacyToByron,
+  profileInitials,
   profileReadsKey,
   recordProfileLogin,
   renameProfile,
   scopedKey,
+  setProfileAvatar,
   shouldOpenOnProfiles,
   switchProfile,
 } from "./profiles.ts";
@@ -170,5 +172,19 @@ describe("profile login gate", () => {
     recordProfileLogin(root, t0);
     expect(shouldOpenOnProfiles(root, t0 + 60_000)).toBe(false);
     expect(shouldOpenOnProfiles(root, t0 + STALE_LOGIN_MS + 1)).toBe(true);
+  });
+});
+
+describe("profile avatar", () => {
+  it("stores and clears a circle photo data URL on the profile", () => {
+    const root = memoryStore();
+    const pal = createProfile(root, "Pal");
+    expect(profileInitials("Byron Kelly")).toBe("BK");
+    expect(profileInitials("sam")).toBe("S");
+    const tiny = "data:image/jpeg;base64,/9j/4AAQ";
+    const withPhoto = setProfileAvatar(root, pal.id, tiny);
+    expect(withPhoto.avatarDataUrl).toBe(tiny);
+    expect(loadProfiles(root).find((p) => p.id === pal.id)?.avatarDataUrl).toBe(tiny);
+    expect(setProfileAvatar(root, pal.id, null).avatarDataUrl).toBeNull();
   });
 });

@@ -71,6 +71,51 @@ button {
   border-bottom: 4px solid var(--yellow);
 }
 
+.top-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #e8e2d4;
+  color: var(--ink);
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-weight: 600;
+  line-height: 1;
+  border: 2px solid var(--ink);
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-header {
+  width: 2.6rem;
+  height: 2.6rem;
+  font-size: 1.05rem;
+}
+
+.avatar-login {
+  width: 3.25rem;
+  height: 3.25rem;
+  font-size: 1.25rem;
+}
+
+.avatar-has-photo {
+  border-color: var(--line);
+  background: #ddd6c8;
+}
+
 .eyebrow {
   margin: 0 0 0.15rem;
   color: var(--muted);
@@ -492,21 +537,29 @@ video {
 }
 
 .profile-login {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
   width: 100%;
   text-align: left;
   border: 1px solid var(--ink);
   border-radius: 12px;
   background: var(--card);
-  padding: 0.85rem 1rem;
-  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
-  font-size: 1.55rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  padding: 0.75rem 0.9rem;
+}
+
+.profile-login-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .profile-login-name {
   display: block;
+  font-family: "Barlow Condensed", "Arial Narrow", sans-serif;
+  font-size: 1.55rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .profile-login-meta {

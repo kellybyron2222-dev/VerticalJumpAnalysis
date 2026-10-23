@@ -121,8 +121,11 @@ import {
   deleteProfile,
   getActiveProfile,
   loadProfiles,
+  imageFileToAvatarDataUrl,
+  profileInitials,
   recordProfileLogin,
   renameProfile,
+  setProfileAvatar,
   shouldOpenOnProfiles,
   switchProfile,
   VISITED_KEY,
@@ -149,6 +152,7 @@ const screenProfiles = must<HTMLElement>("#screen-profiles");
 const profileCreatePrompt = must<HTMLElement>("#profile-create-prompt");
 const profileActiveLabel = must<HTMLElement>("#profile-active-label");
 const profileEyebrow = must<HTMLElement>("#profile-eyebrow");
+const headerAvatar = must<HTMLElement>("#header-avatar");
 const menuButton = must<HTMLButtonElement>("#menu-button");
 const menuPanel = must<HTMLElement>("#menu-panel");
 type AppScreen = "directions" | "box" | "analyze" | "master" | "profiles";
@@ -1034,12 +1038,53 @@ function showScreen(screen: AppScreen): void {
   window.scrollTo(0, 0);
 }
 
+function paintAvatarEl(el: HTMLElement, profile: Profile | null): void {
+  el.replaceChildren();
+  el.classList.remove("avatar-has-photo");
+  if (profile?.avatarDataUrl) {
+    const img = document.createElement("img");
+    img.src = profile.avatarDataUrl;
+    img.alt = "";
+    el.classList.add("avatar-has-photo");
+    el.append(img);
+    return;
+  }
+  el.textContent = profile ? profileInitials(profile.name) : "?";
+}
+
 function updateProfileChrome(): void {
   const name = activeProfile?.name ?? "—";
   profileActiveLabel.textContent = `Profile: ${name}`;
-  profileEyebrow.textContent = name;
+  profileEyebrow.textContent = name === "—" ? "Jump Lab" : name;
+  paintAvatarEl(headerAvatar, activeProfile);
   const githubBlock = document.querySelector<HTMLElement>(".master-sync");
   if (githubBlock) githubBlock.hidden = !activeProfile?.allowGithub;
+}
+
+function pickAvatarForProfile(profile: Profile): void {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    void (async () => {
+      const status = must<HTMLElement>("#profiles-status");
+      try {
+        const dataUrl = await imageFileToAvatarDataUrl(file);
+        const updated = setProfileAvatar(rootStorage, profile.id, dataUrl);
+        if (activeProfile?.id === updated.id) {
+          activeProfile = updated;
+          updateProfileChrome();
+        }
+        status.textContent = `Photo updated for ${updated.name}.`;
+        renderProfilesUi();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : String(error);
+      }
+    })();
+  });
+  input.click();
 }
 
 function bindActiveStore(profile: Profile): void {
@@ -1077,7 +1122,7 @@ function renderProfilesUi(): void {
   const status = must<HTMLElement>("#profiles-status");
   const profiles = loadProfiles(rootStorage);
   status.textContent = profiles.length
-    ? "Tap your name to continue."
+    ? "Tap your name to continue. Use Photo to add a circle picture."
     : "Create a profile to get started.";
   list.replaceChildren();
   for (const profile of profiles) {
@@ -1086,6 +1131,12 @@ function renderProfilesUi(): void {
     const login = document.createElement("button");
     login.type = "button";
     login.className = "profile-login";
+    const avatar = document.createElement("span");
+    avatar.className = "avatar avatar-login";
+    avatar.setAttribute("aria-hidden", "true");
+    paintAvatarEl(avatar, profile);
+    const textWrap = document.createElement("span");
+    textWrap.className = "profile-login-text";
     const nameEl = document.createElement("span");
     nameEl.className = "profile-login-name";
     nameEl.textContent = profile.name;
@@ -1095,7 +1146,8 @@ function renderProfilesUi(): void {
       (profile.id === activeProfile?.id ? "Last used · " : "") +
       (profile.allowGithub ? "GitHub · " : "") +
       "Tap to log in";
-    login.append(nameEl, meta);
+    textWrap.append(nameEl, meta);
+    login.append(avatar, textWrap);
     login.addEventListener("click", () => {
       try {
         loginToProfile(profile);
@@ -1105,6 +1157,36 @@ function renderProfilesUi(): void {
     });
     const actions = document.createElement("div");
     actions.className = "profile-row-actions";
+    const photoBtn = document.createElement("button");
+    photoBtn.type = "button";
+    photoBtn.className = "text-button";
+    photoBtn.textContent = profile.avatarDataUrl ? "Change photo" : "Add photo";
+    photoBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      pickAvatarForProfile(profile);
+    });
+    actions.append(photoBtn);
+    if (profile.avatarDataUrl) {
+      const clearPhoto = document.createElement("button");
+      clearPhoto.type = "button";
+      clearPhoto.className = "text-button";
+      clearPhoto.textContent = "Remove photo";
+      clearPhoto.addEventListener("click", (event) => {
+        event.stopPropagation();
+        try {
+          const updated = setProfileAvatar(rootStorage, profile.id, null);
+          if (activeProfile?.id === updated.id) {
+            activeProfile = updated;
+            updateProfileChrome();
+          }
+          status.textContent = `Photo removed for ${updated.name}.`;
+          renderProfilesUi();
+        } catch (error) {
+          status.textContent = error instanceof Error ? error.message : String(error);
+        }
+      });
+      actions.append(clearPhoto);
+    }
     const renameBtn = document.createElement("button");
     renameBtn.type = "button";
     renameBtn.className = "text-button";
@@ -1149,6 +1231,7 @@ function renderProfilesUi(): void {
           updateProfileChrome();
           profileActiveLabel.textContent = "Choose a profile";
           profileEyebrow.textContent = "Jump Lab";
+          paintAvatarEl(headerAvatar, null);
         } else {
           activeProfile = null;
           updateProfileChrome();

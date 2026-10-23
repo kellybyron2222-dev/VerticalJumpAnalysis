@@ -38,7 +38,12 @@ export interface Profile {
   /** Only the migrated Byron profile may use GitHub sync / token. */
   allowGithub: boolean;
   createdAt: string;
+  /** Small JPEG/PNG data URL for the circle avatar (optional). */
+  avatarDataUrl?: string | null;
 }
+
+export const AVATAR_EDGE_PX = 128;
+export const AVATAR_MAX_DATA_URL_CHARS = 80_000;
 
 export interface ProfilesState {
   profiles: Profile[];
@@ -88,12 +93,20 @@ function readProfilesRaw(root: KeyValueStore): Profile[] {
           typeof o.createdAt === "string"
         );
       })
-      .map((p) => ({
-        id: p.id,
-        name: p.name.trim(),
-        allowGithub: p.allowGithub,
-        createdAt: p.createdAt,
-      }));
+      .map((p) => {
+        const o = p as Profile & { avatarDataUrl?: unknown };
+        const avatar =
+          typeof o.avatarDataUrl === "string" && o.avatarDataUrl.startsWith("data:image/")
+            ? o.avatarDataUrl
+            : null;
+        return {
+          id: o.id,
+          name: o.name.trim(),
+          allowGithub: o.allowGithub,
+          createdAt: o.createdAt,
+          avatarDataUrl: avatar,
+        };
+      });
   } catch {
     return [];
   }
@@ -307,6 +320,72 @@ export function renameProfile(root: KeyValueStore, id: string, name: string): Pr
   if (!found) throw new Error("Profile not found.");
   writeProfiles(root, next);
   return found;
+}
+
+export function setProfileAvatar(
+  root: KeyValueStore,
+  id: string,
+  avatarDataUrl: string | null,
+): Profile {
+  if (
+    avatarDataUrl !== null &&
+    (!avatarDataUrl.startsWith("data:image/") || avatarDataUrl.length > AVATAR_MAX_DATA_URL_CHARS)
+  ) {
+    throw new Error("Photo is too large or not a valid image. Try a smaller picture.");
+  }
+  const profiles = loadProfiles(root);
+  const next = profiles.map((p) =>
+    p.id === id ? { ...p, avatarDataUrl: avatarDataUrl || null } : p,
+  );
+  const found = next.find((p) => p.id === id);
+  if (!found) throw new Error("Profile not found.");
+  writeProfiles(root, next);
+  return found;
+}
+
+/** First letter(s) for the empty circle placeholder. */
+export function profileInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0]!.slice(0, 1).toUpperCase();
+  return (parts[0]!.slice(0, 1) + parts[1]!.slice(0, 1)).toUpperCase();
+}
+
+/**
+ * Center-crop and resize to a square JPEG data URL for the avatar circle.
+ * Keeps localStorage small.
+ */
+export async function imageFileToAvatarDataUrl(
+  file: Blob,
+  edgePx = AVATAR_EDGE_PX,
+): Promise<string> {
+  if (!file.type.startsWith("image/")) {
+    throw new Error("Choose a photo (JPEG or PNG).");
+  }
+  const bitmap = await createImageBitmap(file);
+  try {
+    const size = Math.min(bitmap.width, bitmap.height);
+    const sx = Math.floor((bitmap.width - size) / 2);
+    const sy = Math.floor((bitmap.height - size) / 2);
+    const canvas = document.createElement("canvas");
+    canvas.width = edgePx;
+    canvas.height = edgePx;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not process the photo.");
+    ctx.drawImage(bitmap, sx, sy, size, size, 0, 0, edgePx, edgePx);
+    let quality = 0.82;
+    let dataUrl = canvas.toDataURL("image/jpeg", quality);
+    while (dataUrl.length > AVATAR_MAX_DATA_URL_CHARS && quality > 0.45) {
+      quality -= 0.1;
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+    }
+    if (dataUrl.length > AVATAR_MAX_DATA_URL_CHARS) {
+      throw new Error("Photo is still too large after resize. Try another picture.");
+    }
+    return dataUrl;
+  } finally {
+    bitmap.close();
+  }
 }
 
 export function switchProfile(root: KeyValueStore, id: string): Profile {

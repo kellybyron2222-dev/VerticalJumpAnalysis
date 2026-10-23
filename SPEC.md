@@ -33,7 +33,7 @@ iPhone slo-mo clips picked from the camera roll often arrive stretched in time: 
 ## Profiles (local)
 
 - Local-only profile switcher (name, create, rename, switch, delete with confirm) in the menu. Active profile name is shown on every screen.
-- App opens on the **Profiles** screen for first-time visitors, when nobody has logged in yet, or when the last login is older than 12 hours (shared phone). Tap a profile name to log in and continue.
+- App opens on the **Profiles** screen for first-time visitors, when nobody has logged in yet, or when the last login is older than 12 hours (shared phone). Tap a profile name to log in and continue. Optional circle photo per profile (camera roll / files; resized and stored on-device only); initials shown when no photo.
 - Each profile has its own saved jumps, settings (baseline, box height, jumps-in-clip, chart mode, GCT target, working box), and master log — namespaced in `localStorage` under that profile id.
 - Existing pre-profile data migrates into a default profile named **Byron** without loss. GitHub token/sync stay bound to Byron’s profile only (`allowGithub`). A new profile starts empty and cannot use GitHub sync.
 - Each profile exports its own CSV/xlsx. Unit tests cover namespacing, migration, isolation from Byron’s data/GitHub log, and the login gate.
