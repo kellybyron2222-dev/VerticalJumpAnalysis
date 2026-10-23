@@ -56,7 +56,8 @@ describe("jumpOverlay foot path", () => {
     expect(model!.apexHipY!).toBeLessThan(model!.takeoffHipY!);
     const hip = findHipApex(samples(), 10, 40);
     expect(hip).not.toBeNull();
-    expect(model!.apexFrame).toBe(hip!.frame);
+    expect(hip!.hipY).toBe(model!.apexHipY);
+    expect(model!.apexFrame).toBe(model!.apex.frame);
     expect(model!.bracketX).toBeGreaterThan(model!.apex.x);
   });
 });

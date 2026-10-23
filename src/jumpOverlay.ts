@@ -108,7 +108,8 @@ export function buildJumpOverlayModel(
       : null;
   const hipApex = findHipApex(samples, takeoff, landing);
   const apexHipY = hipApex?.hipY ?? null;
-  const apexFrame = hipApex?.frame ?? apex.frame;
+  // Seek/export frame follows the foot apex so the height tag sits on the feet.
+  const apexFrame = apex.frame;
   const bracketX = Math.min(0.92, Math.max(0.08, apex.x + 0.12));
 
   return {
@@ -133,7 +134,7 @@ function drawHorizontalGuide(
 ): void {
   const x0 = width * 0.08;
   const x1 = width * 0.92;
-  ctx.strokeStyle = "rgba(239, 227, 106, 0.32)";
+  ctx.strokeStyle = "rgba(90, 90, 90, 0.55)";
   ctx.lineWidth = Math.max(1, width * 0.0025);
   ctx.setLineDash([Math.max(4, width * 0.012), Math.max(3, width * 0.008)]);
   ctx.beginPath();
@@ -142,21 +143,20 @@ function drawHorizontalGuide(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  ctx.font = `500 ${fontPx}px Outfit, sans-serif`;
-  ctx.fillStyle = "rgba(239, 227, 106, 0.72)";
+  ctx.font = `600 ${fontPx}px Outfit, sans-serif`;
+  ctx.fillStyle = "#111111";
   ctx.textBaseline = "bottom";
   ctx.textAlign = "left";
   ctx.fillText(label, x0, y - 3);
 }
 
+/** Vertical CoM span between takeoff/apex hip lines (no height tag — tag stays at feet). */
 function drawHeightBracket(
   ctx: CanvasRenderingContext2D,
   width: number,
-  height: number,
   takeoffY: number,
   apexY: number,
   bracketXNorm: number,
-  heightIn: number,
 ): void {
   const x = bracketXNorm * width;
   const top = Math.min(takeoffY, apexY);
@@ -164,17 +164,15 @@ function drawHeightBracket(
   if (!(bottom - top > 4)) return;
 
   ctx.save();
-  ctx.strokeStyle = "rgba(239, 227, 106, 0.4)";
-  ctx.fillStyle = "rgba(239, 227, 106, 0.4)";
+  ctx.strokeStyle = "rgba(90, 90, 90, 0.65)";
+  ctx.fillStyle = "rgba(90, 90, 90, 0.65)";
   ctx.lineWidth = Math.max(1.25, width * 0.003);
 
-  // Vertical span
   ctx.beginPath();
   ctx.moveTo(x, top);
   ctx.lineTo(x, bottom);
   ctx.stroke();
 
-  // End caps / arrowheads pointing inward (between the lines)
   const arm = Math.max(5, width * 0.014);
   const arrow = Math.max(4, width * 0.01);
   for (const y of [top, bottom]) {
@@ -183,7 +181,6 @@ function drawHeightBracket(
     ctx.lineTo(x + arm, y);
     ctx.stroke();
   }
-  // Arrow toward apex (up) at bottom of span, toward takeoff (down) at top — CoM rise
   ctx.beginPath();
   ctx.moveTo(x, top);
   ctx.lineTo(x - arrow * 0.6, top + arrow);
@@ -196,23 +193,32 @@ function drawHeightBracket(
   ctx.lineTo(x + arrow * 0.6, bottom - arrow);
   ctx.closePath();
   ctx.fill();
+  ctx.restore();
+}
 
+/** Height label at the foot apex (not hips). No stem. */
+function drawFootHeightTag(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  apex: { x: number; y: number },
+  heightIn: number,
+): void {
   const tag = `${heightIn.toFixed(1)} in`;
+  ctx.save();
   const fontPx = Math.max(14, Math.round(width * 0.045));
   ctx.font = `600 ${fontPx}px "Barlow Condensed", "Arial Narrow", sans-serif`;
   const padX = 8;
   const metrics = ctx.measureText(tag);
   const boxW = metrics.width + padX * 2;
   const boxH = Math.max(22, width * 0.055);
-  let boxX = x + arm + 6;
-  let boxY = (top + bottom) / 2 - boxH / 2;
-  if (boxX + boxW > width - 4) boxX = x - arm - 6 - boxW;
+  let boxX = apex.x - boxW / 2;
+  let boxY = apex.y - boxH - 8;
   boxX = Math.max(4, Math.min(width - boxW - 4, boxX));
   boxY = Math.max(4, Math.min(height - boxH - 4, boxY));
-
-  ctx.fillStyle = "rgba(28, 25, 20, 0.32)";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.72)";
   ctx.fillRect(boxX, boxY, boxW, boxH);
-  ctx.fillStyle = "#efe36a";
+  ctx.fillStyle = "#111111";
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   ctx.fillText(tag, boxX + padX, boxY + boxH / 2);
@@ -231,7 +237,7 @@ export function drawFootOverlay(
 
   if (model.path.length >= 2) {
     ctx.save();
-    ctx.strokeStyle = "rgba(239, 227, 106, 0.28)";
+    ctx.strokeStyle = "rgba(120, 120, 120, 0.75)";
     ctx.lineWidth = Math.max(1.25, width * 0.004);
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -249,15 +255,15 @@ export function drawFootOverlay(
   if (showTags) {
     for (const point of model.path) {
       const p = px(point);
-      const r = Math.max(2, width * 0.0055);
+      const r = Math.max(2.5, width * 0.006);
       ctx.beginPath();
-      ctx.fillStyle = "rgba(14, 107, 82, 0.28)";
+      ctx.fillStyle = "#0b3d91";
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
-  // CoM / hip flight-time height: takeoff + apex guides and bracket (no stem to feet).
+  // CoM guides at hip height; height tag stays on the foot apex.
   if (
     model.takeoffHipY !== null &&
     model.apexHipY !== null &&
@@ -269,16 +275,10 @@ export function drawFootOverlay(
     const fontPx = Math.max(11, Math.round(width * 0.028));
     drawHorizontalGuide(ctx, width, takeoffY, "takeoff", fontPx);
     drawHorizontalGuide(ctx, width, apexY, "apex", fontPx);
-    drawHeightBracket(
-      ctx,
-      width,
-      height,
-      takeoffY,
-      apexY,
-      model.bracketX,
-      model.heightIn,
-    );
+    drawHeightBracket(ctx, width, takeoffY, apexY, model.bracketX);
   }
+
+  drawFootHeightTag(ctx, width, height, px(model.apex), model.heightIn);
 
   void options.currentFrame;
 }
