@@ -13,6 +13,7 @@ import {
 } from "./detect.ts";
 import { emptyDiagnostics, median, type DetectDiagnostics } from "./detectDiag.ts";
 import { scanStep } from "./multiJump.ts";
+import type { JumpCountChoice } from "./jumpCountPref.ts";
 import { resolveJumpSet, type JumpTimingContext } from "./resolveJumps.ts";
 import type { FrameSeeker } from "./seek.ts";
 
@@ -229,6 +230,8 @@ export interface AnalyzeOptions {
   frameTimes?: readonly number[];
   /** lite (default) or heavy (High accuracy — slower, lazy-loaded). */
   poseQuality?: PoseModelQuality;
+  /** Auto (default) or fixed 1–4 jumps in this clip. */
+  jumpCount?: JumpCountChoice;
 }
 
 interface SamplePass {
@@ -476,7 +479,10 @@ export async function analyzeMultiClip(
       ? single.events.stepOff
       : candidates.map((c) => c.stepOff).find((v) => v !== null) ?? null;
 
-  const resolved = resolveJumpSet(candidates, timing, { stepOffHint });
+  const resolved = resolveJumpSet(candidates, timing, {
+    stepOffHint,
+    jumpCount: options.jumpCount ?? "auto",
+  });
   const diagBase: DetectDiagnostics = {
     ...(single.ok ? single.diagnostics : multi.ok ? multi.diagnostics : single.diagnostics),
     ...mergedDiag,
@@ -484,10 +490,12 @@ export async function analyzeMultiClip(
     notes: [
       ...(single.diagnostics.notes ?? []),
       `Pose model: ${quality}`,
+      `Jumps in clip: ${options.jumpCount ?? "auto"}`,
       ...resolved.notes,
-      ...resolved.rejected.slice(0, 4).map((r) => `Rejected TD${r.touchdown}: ${r.rejectReason}`),
+      ...resolved.warnings,
+      ...resolved.rejected.slice(0, 6).map((r) => `Rejected TD${r.touchdown}: ${r.rejectReason}`),
     ],
-    lowConfidence: resolved.lowConfidence,
+    lowConfidence: resolved.lowConfidence || resolved.warnings.length > 0,
     rejectStage: resolved.jumps.length && !resolved.implausible ? "ok" : single.diagnostics.rejectStage,
   };
 
@@ -514,7 +522,7 @@ export async function analyzeMultiClip(
     ok: true,
     jumps: resolved.jumps,
     model: jumpModel,
-    lowConfidence: resolved.lowConfidence,
+    lowConfidence: resolved.lowConfidence || resolved.warnings.length > 0,
     diagnostics: diagBase,
   };
 }

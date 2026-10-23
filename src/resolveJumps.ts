@@ -1,6 +1,11 @@
 import type { DetectedEvents } from "./detect.ts";
 import type { DetectCandidate } from "./detectDiag.ts";
-import { realSecondsOnClock } from "./metrics.ts";
+import type { JumpCountChoice } from "./jumpCountPref.ts";
+import {
+  jumpHeightMeters,
+  metersToInches,
+  realSecondsOnClock,
+} from "./metrics.ts";
 
 export interface JumpTimingContext {
   captureFps: number;
@@ -15,6 +20,8 @@ export interface ResolvedJumpSet {
   lowConfidence: boolean;
   notes: string[];
   implausible: boolean;
+  /** Soft flags — do not hide the jump; surface in UI. */
+  warnings: string[];
 }
 
 const MIN_CONTACT_S = 0.08;
@@ -24,6 +31,15 @@ const MIN_FLIGHT_S = 0.15; // ~1 in jump height
 const MIN_STAND_SEP_S = 0.12;
 const MIN_FALL_S = 0.11;
 const MAX_FALL_S = 0.45;
+
+/** Auto: drop weak / settling “reps”. */
+const MIN_REP_HEIGHT_IN = 4;
+const MIN_REP_RSI = 0.5;
+const MIN_REP_HEIGHT_FRAC = 0.4;
+const MIN_DROP_FALL_S = 0.08;
+const MAX_DROP_FALL_S = 0.55;
+const FLAG_FLIGHT_S = 0.65;
+const FLAG_HEIGHT_IN = 30;
 
 export function cycleRealDurations(
   c: Pick<DetectCandidate, "touchdown" | "takeoff" | "landing">,
@@ -44,6 +60,17 @@ export function cycleRealDurations(
     timing.stretch,
   );
   return { contactS, flightS };
+}
+
+export function cycleMetrics(
+  c: Pick<DetectCandidate, "touchdown" | "takeoff" | "landing">,
+  timing: JumpTimingContext,
+): { contactS: number; flightS: number; heightIn: number; rsi: number } {
+  const { contactS, flightS } = cycleRealDurations(c, timing);
+  const heightM = jumpHeightMeters(flightS);
+  const heightIn = metersToInches(heightM);
+  const rsi = contactS > 0 ? heightM / contactS : 0;
+  return { contactS, flightS, heightIn, rsi };
 }
 
 /** Drop nonsense fragments before counting jumps. */
@@ -77,6 +104,86 @@ export function validateCandidateRealTime(
   return { ok: true, reason: "ok", contactS, flightS };
 }
 
+/**
+ * Real drop/step-off (meaningful free-fall) or mid-drop / CM with no SO mark.
+ * A 1-frame "SO" right before TD is not a drop (walking/settling).
+ */
+export function hasDropOrCountermovement(
+  c: DetectCandidate,
+  timing: JumpTimingContext,
+): boolean {
+  if (c.stepOff === null || c.stepOff >= c.touchdown) {
+    // Mid-drop start or countermovement — allowed; Auto height/RSI filters still apply.
+    return true;
+  }
+  const fall = realSecondsOnClock(
+    timing.frameTimes,
+    c.stepOff,
+    c.touchdown,
+    timing.captureFps,
+    timing.stretch,
+  );
+  return fall >= MIN_DROP_FALL_S && fall <= MAX_DROP_FALL_S;
+}
+
+/** Auto-only: drop tiny / settling cycles vs the best rep. */
+export function filterAutoReps(
+  valid: readonly DetectCandidate[],
+  timing: JumpTimingContext,
+): { kept: DetectCandidate[]; rejected: Array<DetectCandidate & { rejectReason: string }> } {
+  const rejected: Array<DetectCandidate & { rejectReason: string }> = [];
+  const withDrop: DetectCandidate[] = [];
+  for (const c of valid) {
+    if (!hasDropOrCountermovement(c, timing)) {
+      rejected.push({ ...c, rejectReason: "no real drop/step-off or countermovement" });
+      continue;
+    }
+    withDrop.push(c);
+  }
+  if (!withDrop.length) return { kept: [], rejected };
+
+  const metrics = withDrop.map((c) => ({ c, m: cycleMetrics(c, timing) }));
+  const bestHeight = Math.max(...metrics.map((x) => x.m.heightIn));
+  const kept: DetectCandidate[] = [];
+  for (const { c, m } of metrics) {
+    if (!(m.heightIn >= MIN_REP_HEIGHT_IN)) {
+      rejected.push({ ...c, rejectReason: `height ${m.heightIn.toFixed(1)} in < ${MIN_REP_HEIGHT_IN}` });
+      continue;
+    }
+    if (!(m.rsi >= MIN_REP_RSI)) {
+      rejected.push({ ...c, rejectReason: `RSI ${m.rsi.toFixed(2)} < ${MIN_REP_RSI}` });
+      continue;
+    }
+    if (bestHeight > 0 && m.heightIn < bestHeight * MIN_REP_HEIGHT_FRAC) {
+      rejected.push({
+        ...c,
+        rejectReason: `height ${m.heightIn.toFixed(1)} in < 40% of best (${bestHeight.toFixed(1)})`,
+      });
+      continue;
+    }
+    kept.push(c);
+  }
+  return { kept, rejected };
+}
+
+export function landingCheckWarnings(
+  jumps: readonly DetectedEvents[],
+  timing: JumpTimingContext,
+): string[] {
+  const warnings: string[] = [];
+  jumps.forEach((j, i) => {
+    const m = cycleMetrics(j, timing);
+    const label = jumps.length > 1 ? `Jump ${i + 1}` : "Jump";
+    if (m.flightS > FLAG_FLIGHT_S || m.heightIn > FLAG_HEIGHT_IN) {
+      warnings.push(
+        `${label}: check LD mark: landing may be late` +
+          ` (flight ${(m.flightS * 1000).toFixed(0)} ms, height ${m.heightIn.toFixed(1)} in).`,
+      );
+    }
+  });
+  return warnings;
+}
+
 /** True when A fully finishes and a clear standing gap precedes B (or vice versa). */
 export function cyclesSeparated(
   a: DetectCandidate,
@@ -86,10 +193,6 @@ export function cyclesSeparated(
   const first = a.landing <= b.touchdown ? a : b;
   const second = a.landing <= b.touchdown ? b : a;
   if (first.landing >= second.touchdown) return false;
-  // Overlap of contact/flight windows
-  if (first.takeoff < second.landing && second.touchdown < first.landing) {
-    // still check gap between landing and next TD
-  }
   const gapS = realSecondsOnClock(
     timing.frameTimes,
     first.landing,
@@ -175,17 +278,27 @@ export function touchdownFromFreeFall(
   return bestTd;
 }
 
+function toEvents(c: DetectCandidate): DetectedEvents {
+  return {
+    stepOff: c.stepOff,
+    touchdown: c.touchdown,
+    takeoff: c.takeoff,
+    landing: c.landing,
+  };
+}
+
 /**
- * Filter invalid cycles, require separation for multi-jump, otherwise merge to one.
+ * Filter invalid cycles; Auto drops weak settling reps; fixed N takes N best by score.
  */
 export function resolveJumpSet(
   candidates: readonly DetectCandidate[],
   timing: JumpTimingContext,
-  options: { stepOffHint?: number | null } = {},
+  options: { stepOffHint?: number | null; jumpCount?: JumpCountChoice } = {},
 ): ResolvedJumpSet {
   const notes: string[] = [];
   const rejected: Array<DetectCandidate & { rejectReason: string }> = [];
   const valid: DetectCandidate[] = [];
+  const jumpCount: JumpCountChoice = options.jumpCount ?? "auto";
 
   for (const c of candidates) {
     const check = validateCandidateRealTime(c, timing);
@@ -199,7 +312,6 @@ export function resolveJumpSet(
 
   const stepOffHint = options.stepOffHint ?? null;
 
-  // Free-fall anchor: if SO→TD looks real, keep only cycles at/after that TD for merge.
   let anchoredTd: number | null = null;
   if (stepOffHint !== null) {
     anchoredTd = touchdownFromFreeFall(stepOffHint, candidates, timing);
@@ -208,8 +320,46 @@ export function resolveJumpSet(
     }
   }
 
-  if (valid.length >= 2) {
-    const sorted = [...valid].sort((a, b) => a.touchdown - b.touchdown);
+  // Fixed N: exactly N best-scoring valid cycles, in time order (no Auto quality filter).
+  if (jumpCount !== "auto") {
+    const n = jumpCount;
+    const best = [...valid].sort((a, b) => b.score - a.score || a.touchdown - b.touchdown).slice(0, n);
+    const ordered = [...best].sort((a, b) => a.touchdown - b.touchdown);
+    if (!ordered.length) {
+      return {
+        jumps: [],
+        valid,
+        rejected,
+        lowConfidence: true,
+        notes: [...notes, `Asked for ${n} jump(s) but none were valid.`],
+        implausible: true,
+        warnings: [],
+      };
+    }
+    const jumps = ordered.map(toEvents);
+    const warnings = landingCheckWarnings(jumps, timing);
+    notes.push(`Jumps in clip = ${n}: kept ${jumps.length} best-scoring valid cycle(s).`);
+    return {
+      jumps,
+      valid: ordered,
+      rejected,
+      lowConfidence: jumps.length < n,
+      notes,
+      implausible: false,
+      warnings,
+    };
+  }
+
+  // Auto: quality-filter then keep up to 4 separated reps.
+  const auto = filterAutoReps(valid, timing);
+  rejected.push(...auto.rejected);
+  for (const r of auto.rejected) {
+    notes.push(`Auto dropped TD${r.touchdown}: ${r.rejectReason}`);
+  }
+  const reps = auto.kept;
+
+  if (reps.length >= 2) {
+    const sorted = [...reps].sort((a, b) => a.touchdown - b.touchdown);
     let separated = true;
     for (let i = 1; i < sorted.length; i += 1) {
       if (!cyclesSeparated(sorted[i - 1]!, sorted[i]!, timing)) {
@@ -218,24 +368,37 @@ export function resolveJumpSet(
       }
     }
     if (separated) {
+      const limited = sorted.slice(0, 4);
+      const jumps = limited.map(toEvents);
+      const warnings = landingCheckWarnings(jumps, timing);
       return {
-        jumps: sorted.map((c) => ({
-          stepOff: c.stepOff,
-          touchdown: c.touchdown,
-          takeoff: c.takeoff,
-          landing: c.landing,
-        })),
-        valid: sorted,
+        jumps,
+        valid: limited,
         rejected,
         lowConfidence: false,
-        notes: [...notes, `Kept ${sorted.length} separated valid cycles.`],
+        notes: [...notes, `Auto kept ${limited.length} separated rep(s).`],
         implausible: false,
+        warnings,
       };
     }
     notes.push("Valid cycles overlap or touch — merging to one jump.");
   }
 
-  // Single-jump path: merge fragments (valid + rejected that share the window).
+  // Single-jump path: prefer best Auto rep; else merge fragments.
+  if (reps.length === 1) {
+    const jumps = [toEvents(reps[0]!)];
+    const warnings = landingCheckWarnings(jumps, timing);
+    return {
+      jumps,
+      valid: reps,
+      rejected,
+      lowConfidence: false,
+      notes: [...notes, "Auto kept one rep."],
+      implausible: false,
+      warnings,
+    };
+  }
+
   const mergePool =
     anchoredTd !== null
       ? candidates.filter((c) => c.touchdown >= anchoredTd! - 2 || c.landing > anchoredTd!)
@@ -250,10 +413,10 @@ export function resolveJumpSet(
       lowConfidence: true,
       notes: [...notes, "No mergeable candidates."],
       implausible: true,
+      warnings: [],
     };
   }
 
-  // If free-fall TD is known and earlier than merge TD, prefer it.
   if (anchoredTd !== null && anchoredTd < merged.touchdown) {
     merged.touchdown = anchoredTd;
     if (merged.takeoff <= merged.touchdown) merged.takeoff = merged.touchdown + 1;
@@ -276,6 +439,7 @@ export function resolveJumpSet(
       lowConfidence: true,
       notes,
       implausible: true,
+      warnings: [],
     };
   }
 
@@ -284,13 +448,15 @@ export function resolveJumpSet(
       ? "Single valid cycle (or fragments merged)."
       : "Merged overlapping fragments into one jump.",
   );
+  const jumps = [merged];
   return {
-    jumps: [merged],
+    jumps,
     valid,
     rejected,
     lowConfidence: rejected.length > 0 && valid.length === 0,
     notes,
     implausible: false,
+    warnings: landingCheckWarnings(jumps, timing),
   };
 }
 

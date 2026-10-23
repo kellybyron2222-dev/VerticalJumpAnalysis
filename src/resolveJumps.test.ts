@@ -117,3 +117,63 @@ describe("real two-jump set still splits", () => {
     expect(resolved.jumps[1]!.touchdown).toBe(340);
   });
 });
+
+describe("Byron false second jump (settling after one drop)", () => {
+  /** Exact candidates from build 2026-10-23e heavy-model clip. */
+  const byronA: DetectCandidate = {
+    stepOff: 60,
+    touchdown: 86,
+    takeoff: 122,
+    landing: 266,
+    score: 38.3,
+    note: "foot-speed ok",
+  };
+  const byronB: DetectCandidate = {
+    stepOff: 365,
+    touchdown: 366,
+    takeoff: 432,
+    landing: 481,
+    score: 37.0,
+    note: "foot-speed ok",
+  };
+  const timing205 = { captureFps: 205.5, stretch: 1 };
+
+  it("Auto keeps only A (drops settling B)", () => {
+    const resolved = resolveJumpSet([byronA, byronB], timing205, { jumpCount: "auto" });
+    expect(resolved.jumps).toHaveLength(1);
+    expect(resolved.jumps[0]!.touchdown).toBe(86);
+    expect(resolved.jumps[0]!.takeoff).toBe(122);
+    expect(resolved.jumps[0]!.landing).toBe(266);
+    expect(resolved.warnings.some((w) => /check LD mark/i.test(w))).toBe(true);
+  });
+
+  it("N=1 returns A only (best score)", () => {
+    const resolved = resolveJumpSet([byronA, byronB], timing205, { jumpCount: 1 });
+    expect(resolved.jumps).toHaveLength(1);
+    expect(resolved.jumps[0]!.touchdown).toBe(86);
+    expect(resolved.jumps[0]!.landing).toBe(266);
+  });
+
+  it("real 2-rep set (both ~10+ in, similar height) still returns 2", () => {
+    // ~11 in each at 52 fps / 4× stretch (flight ~100 frames).
+    const r1: DetectCandidate = {
+      stepOff: 40,
+      touchdown: 80,
+      takeoff: 120,
+      landing: 220,
+      score: 40,
+    };
+    const r2: DetectCandidate = {
+      stepOff: 300,
+      touchdown: 340,
+      takeoff: 380,
+      landing: 480,
+      score: 39,
+    };
+    const timing = { captureFps: 207, stretch: 4, frameTimes: ptsClock(600, 52) };
+    const resolved = resolveJumpSet([r1, r2], timing, { jumpCount: "auto" });
+    expect(resolved.jumps).toHaveLength(2);
+    expect(resolved.jumps[0]!.touchdown).toBe(80);
+    expect(resolved.jumps[1]!.touchdown).toBe(340);
+  });
+});

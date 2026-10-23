@@ -381,9 +381,14 @@ export function mergeDetectionCandidates(
     }
     if (bestIdx >= 0 && bestDist <= frameTol * 3) {
       usedSpeed.add(bestIdx);
-      // Keep floor marks (repeatable); boost score when foot-speed agrees.
+      const s = speed[bestIdx]!;
+      // Prefer first sustained foot-speed stop for LD (avoid late settle).
+      const landing = Math.min(f.landing, s.landing);
+      const takeoff = Math.min(Math.max(f.takeoff, f.touchdown + 1), landing - 1);
       merged.push({
         ...f,
+        takeoff,
+        landing,
         score: f.score + 10,
         note: `${f.note ?? "ok"}; agreed with foot-speed`,
       });

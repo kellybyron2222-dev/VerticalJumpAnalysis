@@ -322,6 +322,16 @@
           <div class="auto-detect">
             <button type="button" id="auto-detect" disabled>Auto-detect events</button>
             <button type="button" id="cancel-detect" class="text-button" hidden>Cancel</button>
+            <fieldset class="jump-count">
+              <legend>Jumps in this clip</legend>
+              <div id="jump-count-chips" class="chips" role="group" aria-label="Jumps in this clip">
+                <button type="button" data-jumps="auto" aria-pressed="true">Auto</button>
+                <button type="button" data-jumps="1" aria-pressed="false">1</button>
+                <button type="button" data-jumps="2" aria-pressed="false">2</button>
+                <button type="button" data-jumps="3" aria-pressed="false">3</button>
+                <button type="button" data-jumps="4" aria-pressed="false">4</button>
+              </div>
+            </fieldset>
             <label class="high-accuracy" for="high-accuracy">
               <input type="checkbox" id="high-accuracy" />
               <span>High accuracy (slower — heavy pose model)</span>

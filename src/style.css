@@ -413,6 +413,23 @@ video {
   flex-shrink: 0;
 }
 
+.jump-count {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.jump-count legend {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.jump-count .chips {
+  margin-top: 0;
+}
+
 .timeline {
   position: relative;
   height: 28px;

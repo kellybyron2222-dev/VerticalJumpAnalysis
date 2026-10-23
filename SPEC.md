@@ -82,7 +82,10 @@ Detect touchdown, takeoff, and landing in the browser with a pose model (MediaPi
 Auto-detect (on-device only; video never uploads):
 
 - Default MediaPipe Pose Landmarker **lite** model. Optional **High accuracy** toggle lazy-loads the **heavy** model and re-scans; the UI must say it is slower.
-- Floor-contact candidates are cross-checked with a **foot-speed** foot-strike detector: smooth ankle/heel/toe vertical position, vertical velocity in real time (after slow-mo stretch correction), touchdown when downward speed drops to ~0 and the foot stays still, takeoff when upward speed first exceeds a threshold after contact, landing at the next downward speed stop. Prefer cycles consistent with both paths.
+- Floor-contact candidates are cross-checked with a **foot-speed** foot-strike detector: smooth ankle/heel/toe vertical position, vertical velocity in real time (after slow-mo stretch correction), touchdown when downward speed drops to ~0 and the foot stays still, takeoff when upward speed first exceeds a threshold after contact, landing at the **first** sustained foot-speed stop after takeoff (not a later settle). Prefer cycles consistent with both paths.
+- **Jumps in this clip** selector: Auto / 1 / 2 / 3 / 4 (remembered; default Auto). Fixed N returns exactly the N best-scoring valid cycles in time order (N=1 → single jump, no multi-jump panel). Auto may find 1–4.
+- In Auto, drop a cycle as a rep when height < 4 in, RSI < 0.5, or height < 40% of the best cycle; require a real drop/step-off (meaningful free-fall) or mid-drop/countermovement — not a 1-frame fake step-off from walking/settling. Prefer under-detecting over inventing a second jump.
+- Flag (do not hide) any cycle with flight > 650 ms real or height > 30 in: "check LD mark: landing may be late".
 - Keep real-time plausibility gates: contact 80–1000 ms, flight ≥150 ms. If no plausible jump is found, say so and fall back to manual frame marking — never apply nonsense marks.
 
 ### Milestone 3 — Metrics, sessions, and box profile

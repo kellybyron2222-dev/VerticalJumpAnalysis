@@ -45,6 +45,12 @@ import {
   saveBoxHeightPref,
 } from "./boxHeightPref.ts";
 import {
+  loadJumpCountPref,
+  parseJumpCountChoice,
+  saveJumpCountPref,
+  type JumpCountChoice,
+} from "./jumpCountPref.ts";
+import {
   createTrial,
   loadTrials,
   saveTrials,
@@ -172,7 +178,25 @@ const chartJumpType = must<HTMLSelectElement>("#chart-jump-type");
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const highAccuracy = must<HTMLInputElement>("#high-accuracy");
+const jumpCountChips = document.querySelectorAll<HTMLButtonElement>("#jump-count-chips button");
 const detectStatus = must<HTMLElement>("#detect-status");
+let jumpCountChoice: JumpCountChoice = loadJumpCountPref(localStorage);
+
+function syncJumpCountChips(): void {
+  for (const chip of jumpCountChips) {
+    const value = parseJumpCountChoice(chip.dataset.jumps);
+    chip.setAttribute("aria-pressed", String(value === jumpCountChoice));
+  }
+}
+
+for (const chip of jumpCountChips) {
+  chip.addEventListener("click", () => {
+    jumpCountChoice = parseJumpCountChoice(chip.dataset.jumps);
+    saveJumpCountPref(localStorage, jumpCountChoice);
+    syncJumpCountChips();
+  });
+}
+syncJumpCountChips();
 const detectDiagEl = must<HTMLElement>("#detect-diag");
 const slowInput = must<HTMLInputElement>("#slowmo");
 const cadenceButton = must<HTMLButtonElement>("#detect-cadence");
@@ -1085,6 +1109,7 @@ async function runDetection(): Promise<void> {
       stretch,
       frameTimes: frameTimes ?? undefined,
       poseQuality: highAccuracy.checked ? "heavy" : "lite",
+      jumpCount: jumpCountChoice,
       onProgress: (message) => {
         detectStatus.textContent = message;
       },
@@ -1105,6 +1130,10 @@ async function runDetection(): Promise<void> {
       ...events,
       stepOff: stepOffForFall(events.stepOff, events.touchdown, frameTimes ?? undefined, stretch),
     }));
+    const ldWarnings = (result.diagnostics.notes ?? []).filter((n) =>
+      n.includes("check LD mark"),
+    );
+    const warnSuffix = ldWarnings.length ? ` ${ldWarnings.join(" ")}` : "";
     if (jumps.length === 1) {
       const events = jumps[0]!;
       marks.stepOff = events.stepOff;
@@ -1112,9 +1141,12 @@ async function runDetection(): Promise<void> {
       marks.takeoff = events.takeoff;
       marks.landing = events.landing;
       frame = events.touchdown;
-      detectStatus.textContent = result.lowConfidence
-        ? "Marks set but look off — check them with Go to / Set (see Advanced diagnostics)."
-        : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
+      multiJumpPanel.hidden = true;
+      detectStatus.textContent = (
+        result.lowConfidence
+          ? "Marks set but look off — check them with Go to / Set (see Advanced diagnostics)."
+          : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
+      ) + warnSuffix;
       return;
     }
     multiJumpRows = buildMultiJumpRows(jumps, frameTimes ?? undefined, fps, stretch);
@@ -1125,9 +1157,11 @@ async function runDetection(): Promise<void> {
     marks.takeoff = first.takeoff;
     marks.landing = first.landing;
     frame = first.touchdown;
-    detectStatus.textContent = result.lowConfidence
-      ? `Found ${jumps.length} jumps but timings look off — check each one (see Advanced).`
-      : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`;
+    detectStatus.textContent = (
+      result.lowConfidence
+        ? `Found ${jumps.length} jumps but timings look off — check each one (see Advanced).`
+        : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`
+    ) + warnSuffix;
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
     else {
