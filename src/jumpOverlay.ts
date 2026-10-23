@@ -189,87 +189,67 @@ function strokeTrailSegment(
 }
 
 /**
- * Instagram-safe metrics band: ~12% from top, inside top third;
- * keep bottom ~15% clear of important chrome.
+ * Pre-t cream metrics strip, drawn on-image and lifted above the bottom edge
+ * so Instagram crops (4:5 / 9:16 / 1:1) are less likely to clip it.
  */
-export const METRICS_SAFE = {
-  topMargin: 0.12,
-  bottomClear: 0.15,
-  bandHeight: 0.1,
-} as const;
+export const METRICS_BOTTOM_LIFT = 0.09;
 
-export function metricsBandRect(
+export function metricsStripHeight(width: number): number {
+  return Math.max(96, Math.round(width * 0.18));
+}
+
+/** Cream strip rect: same size as pre-t, bottom edge ~9% up from the frame bottom. */
+export function metricsStripRect(
   width: number,
   height: number,
 ): { x: number; y: number; w: number; h: number } {
-  const y = height * METRICS_SAFE.topMargin;
-  const maxBottom = height / 3;
-  const h = Math.min(
-    Math.max(52, height * METRICS_SAFE.bandHeight),
-    Math.max(40, maxBottom - y),
-  );
+  const h = metricsStripHeight(width);
+  const lift = height * METRICS_BOTTOM_LIFT;
+  const y = Math.max(0, height - h - lift);
   return { x: 0, y, w: width, h };
 }
 
-/** Fade in at takeoff, then stay; full opacity for still card (null frame). */
-export function metricsBandOpacity(
-  currentFrame: number | null | undefined,
-  takeoff: number,
-): number {
-  if (currentFrame == null) return 1;
-  if (currentFrame < takeoff) return 0;
-  const fadeFrames = 5;
-  if (currentFrame < takeoff + fadeFrames) {
-    return (currentFrame - takeoff + 1) / fadeFrames;
-  }
-  return 1;
-}
-
-/** On-image Jump height / Contact time / RSI band (card + video). */
-export function drawMetricsBand(
+/** Jump height / Contact time / RSI — exact pre-t cream style. */
+export function drawMetricsStrip(
   ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
   width: number,
-  height: number,
+  tableH: number,
   metrics: JumpOverlayMetrics,
-  opacity = 1,
-): { y: number; h: number } {
-  const band = metricsBandRect(width, height);
-  if (!(opacity > 0)) return { y: band.y, h: band.h };
-
-  ctx.save();
-  ctx.globalAlpha = Math.min(1, Math.max(0, opacity));
-  ctx.fillStyle = "rgba(8, 8, 10, 0.72)";
-  ctx.fillRect(band.x, band.y, band.w, band.h);
+): void {
+  ctx.fillStyle = "#f3f0e7";
+  ctx.fillRect(x, y, width, tableH);
+  ctx.strokeStyle = "#e2dccf";
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + width, y);
+  ctx.stroke();
 
   const cols = [
     { label: "Jump height", value: `${metrics.heightIn.toFixed(1)} in` },
     { label: "Contact time", value: `${Math.round(metrics.gctMs)} ms` },
     { label: "RSI", value: metrics.rsi.toFixed(2) },
   ];
-  const colW = band.w / 3;
-  const labelPx = Math.max(11, Math.round(width * 0.028));
-  const valuePx = Math.max(20, Math.round(width * 0.055));
+  const colW = width / 3;
   cols.forEach((col, i) => {
-    const cx = band.x + colW * i + colW / 2;
-    ctx.fillStyle = "rgba(245, 245, 245, 0.85)";
-    ctx.font = `600 ${labelPx}px Outfit, sans-serif`;
+    const cx = x + colW * i + colW / 2;
+    ctx.fillStyle = "#6d675c";
+    ctx.font = `600 ${Math.max(11, Math.round(width * 0.028))}px Outfit, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(col.label, cx, band.y + band.h * 0.36);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `700 ${valuePx}px "Barlow Condensed", sans-serif`;
-    ctx.fillText(col.value, cx, band.y + band.h * 0.78);
+    ctx.fillText(col.label, cx, y + tableH * 0.38);
+    ctx.fillStyle = "#1c1914";
+    ctx.font = `600 ${Math.max(18, Math.round(width * 0.055))}px "Barlow Condensed", sans-serif`;
+    ctx.fillText(col.value, cx, y + tableH * 0.72);
     if (i > 0) {
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = "#e2dccf";
       ctx.beginPath();
-      ctx.moveTo(band.x + colW * i, band.y + band.h * 0.18);
-      ctx.lineTo(band.x + colW * i, band.y + band.h * 0.82);
+      ctx.moveTo(x + colW * i, y + 12);
+      ctx.lineTo(x + colW * i, y + tableH - 12);
       ctx.stroke();
     }
   });
-  ctx.restore();
-  return { y: band.y, h: band.h };
 }
 
 function drawApexHeight(
@@ -277,6 +257,7 @@ function drawApexHeight(
   width: number,
   height: number,
   model: JumpOverlayModel,
+  metricsTop: number | null = null,
 ): void {
   const heel = {
     x: model.heelApex.x * width,
@@ -286,12 +267,10 @@ function drawApexHeight(
   const x = heel.x;
   const lineWidth = Math.max(3, width * 0.008);
   const tick = Math.max(12, width * 0.032);
-  const band = metricsBandRect(width, height);
-  const bandBottom = band.y + band.h + 8;
-  const bottomLimit = height * (1 - METRICS_SAFE.bottomClear);
 
   ctx.save();
   ctx.lineCap = "round";
+  // Dark outline
   ctx.strokeStyle = OVERLAY.apexOutline;
   ctx.lineWidth = lineWidth + 2.5;
   ctx.beginPath();
@@ -302,6 +281,7 @@ function drawApexHeight(
   ctx.moveTo(x - tick, floorY);
   ctx.lineTo(x + tick, floorY);
   ctx.stroke();
+  // Bright lime
   ctx.strokeStyle = OVERLAY.apex;
   ctx.lineWidth = lineWidth;
   ctx.beginPath();
@@ -317,17 +297,18 @@ function drawApexHeight(
   const fontPx = Math.max(15, Math.round(width * 0.048));
   ctx.font = `700 ${fontPx}px "Barlow Condensed", "Arial Narrow", sans-serif`;
   const padX = 8;
-  const textW = ctx.measureText(tag).width;
-  const boxW = textW + padX * 2;
+  const measured = ctx.measureText(tag);
+  const boxW = measured.width + padX * 2;
   const boxH = Math.max(24, width * 0.058);
   let boxX = x + tick + 6;
   let boxY = (floorY + heel.y) / 2 - boxH / 2;
   if (boxX + boxW > width - 4) boxX = x - tick - 6 - boxW;
   boxX = Math.max(4, Math.min(width - boxW - 4, boxX));
-  // Keep height label out of the metrics band and out of the bottom crop zone.
-  if (boxY < bandBottom) boxY = bandBottom;
-  if (boxY + boxH > bottomLimit) boxY = Math.max(bandBottom, bottomLimit - boxH);
-  boxY = Math.max(bandBottom, Math.min(height - boxH - 4, boxY));
+  boxY = Math.max(4, Math.min(height - boxH - 4, boxY));
+  // Keep the apex height label above the cream metrics strip.
+  if (metricsTop !== null && boxY + boxH > metricsTop - 6) {
+    boxY = Math.max(4, metricsTop - 6 - boxH);
+  }
   ctx.fillStyle = OVERLAY.labelBack;
   ctx.fillRect(boxX, boxY, boxW, boxH);
   ctx.strokeStyle = OVERLAY.apexOutline;
@@ -341,9 +322,9 @@ function drawApexHeight(
 }
 
 /**
- * Moving heel dot + growing faint trail; apex floor→heel line + height label
- * when at/after apex (or always when currentFrame is null — jump card).
- * Optional on-image metrics band (Instagram-safe). Shared by screen/card/video.
+ * Build-s overlay: magenta heel dot, fading cyan trail, lime floor→heel apex
+ * line + height label. Optional on-image cream metrics (lifted from bottom).
+ * Shared by on-screen, PNG card, and video export.
  */
 export function drawFootOverlay(
   ctx: CanvasRenderingContext2D,
@@ -362,11 +343,7 @@ export function drawFootOverlay(
   const through = fullTrail ? model.landing : options.currentFrame!;
   const trail = heelTrailThrough(model.heelPath, through);
   const trailWidth = Math.max(1.25, width * 0.0035);
-
-  if (options.metrics) {
-    const opacity = metricsBandOpacity(options.currentFrame, model.takeoff);
-    drawMetricsBand(ctx, width, height, options.metrics, opacity);
-  }
+  const strip = options.metrics ? metricsStripRect(width, height) : null;
 
   if (trail.length >= 2) {
     const n = trail.length - 1;
@@ -380,7 +357,7 @@ export function drawFootOverlay(
 
   const showApex = fullTrail || (options.currentFrame !== null && options.currentFrame! >= model.apexFrame);
   if (showApex) {
-    drawApexHeight(ctx, width, height, model);
+    drawApexHeight(ctx, width, height, model, strip?.y ?? null);
   }
 
   const heelNow = fullTrail ? model.heelApex : heelAtFrame(model.heelPath, through);
@@ -398,11 +375,15 @@ export function drawFootOverlay(
     ctx.fill();
     ctx.restore();
   }
+
+  // Metrics last so the cream strip stays readable; full opacity all frames.
+  if (options.metrics && strip) {
+    drawMetricsStrip(ctx, strip.x, strip.y, strip.w, strip.h, options.metrics);
+  }
 }
 
 /**
- * Compose export card: video frame + overlays + on-image metrics band.
- * Canvas matches the frame (no bottom table). Full trail + apex.
+ * Compose export card: frame-sized PNG with build-s overlays + lifted cream metrics.
  */
 export function composeJumpCardPng(
   videoFrame: CanvasImageSource,

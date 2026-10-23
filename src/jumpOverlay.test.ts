@@ -1,20 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { FootSample } from "./detect.ts";
 import {
+  METRICS_BOTTOM_LIFT,
   OVERLAY,
   buildJumpOverlayModel,
   exportFrameHoldMs,
+  exportReadyMediaVisibility,
   exportVideoFrameRange,
   findFlightApex,
   floorLevelNearTakeoff,
   heelAtFrame,
   heelPathDuringFlight,
   heelTrailThrough,
+  metricsStripRect,
   parseExportPlaybackSpeed,
-  METRICS_SAFE,
-  exportReadyMediaVisibility,
-  metricsBandOpacity,
-  metricsBandRect,
   pickRecorderMime,
   recorderFormatNote,
 } from "./jumpOverlay.ts";
@@ -71,10 +70,11 @@ describe("jumpOverlay heel trail", () => {
     expect(model.floorY).toBeCloseTo(0.9, 2);
   });
 
-  it("uses a high-contrast palette (magenta dot, cyan trail, lime apex)", () => {
+  it("keeps the build-s high-contrast palette (magenta / cyan / lime)", () => {
     expect(OVERLAY.heelDot.toLowerCase()).toBe("#ff2d95");
     expect(OVERLAY.trail.toLowerCase()).toBe("#00e5ff");
     expect(OVERLAY.apex.toLowerCase()).toBe("#c8ff00");
+    expect(OVERLAY.heelDotOutline.toLowerCase()).toBe("#ffffff");
     expect(OVERLAY.trailOpacityMax).toBeLessThanOrEqual(0.4);
     expect(OVERLAY.trailOpacityMax).toBeGreaterThanOrEqual(0.35);
   });
@@ -105,16 +105,13 @@ describe("jump video export helpers", () => {
     expect(exportReadyMediaVisibility("video")).toEqual({ showVideo: true, showImage: false });
   });
 
-  it("places the metrics band in an Instagram-safe top zone", () => {
+  it("lifts the cream metrics strip ~9% from the bottom (pre-t style)", () => {
     const h = 1280;
     const w = 720;
-    const band = metricsBandRect(w, h);
-    expect(band.y).toBeCloseTo(h * METRICS_SAFE.topMargin, 5);
-    expect(band.y + band.h).toBeLessThanOrEqual(h / 3 + 1);
-    expect(band.y + band.h).toBeLessThan(h * (1 - METRICS_SAFE.bottomClear));
-    expect(metricsBandOpacity(null, 10)).toBe(1);
-    expect(metricsBandOpacity(5, 10)).toBe(0);
-    expect(metricsBandOpacity(10, 10)).toBeGreaterThan(0);
-    expect(metricsBandOpacity(20, 10)).toBe(1);
+    const strip = metricsStripRect(w, h);
+    expect(METRICS_BOTTOM_LIFT).toBeCloseTo(0.09, 5);
+    expect(h - (strip.y + strip.h)).toBeCloseTo(h * METRICS_BOTTOM_LIFT, 5);
+    expect(strip.h).toBe(Math.max(96, Math.round(w * 0.18)));
+    expect(strip.y).toBeGreaterThan(0);
   });
 });
