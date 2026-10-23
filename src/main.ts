@@ -1076,11 +1076,15 @@ async function runDetection(): Promise<void> {
   multiJumpRows = [];
   showDetectDiagnostics(null);
   try {
+    const stretch = activeStretch();
     const result = await analyzeMultiClip({
       video,
       seeker,
       frameCount: count,
       signal: controller.signal,
+      captureFps: fps,
+      stretch,
+      frameTimes: frameTimes ?? undefined,
       onProgress: (message) => {
         detectStatus.textContent = message;
       },
@@ -1095,7 +1099,6 @@ async function runDetection(): Promise<void> {
       multiJumpPanel.hidden = true;
       return;
     }
-    const stretch = activeStretch();
     const jumps = result.jumps.map((events) => ({
       ...events,
       stepOff: stepOffForFall(events.stepOff, events.touchdown, frameTimes ?? undefined, stretch),
@@ -1109,7 +1112,7 @@ async function runDetection(): Promise<void> {
       frame = events.touchdown;
       maybePrefillBox();
       detectStatus.textContent = result.lowConfidence
-        ? "Low confidence marks set — check them with Go to / Set. Free-fall or contact looks marginal (see Advanced)."
+        ? "Marks set but look off — check them with Go to / Set (see Advanced diagnostics)."
         : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
       return;
     }
@@ -1122,7 +1125,9 @@ async function runDetection(): Promise<void> {
     marks.landing = first.landing;
     frame = first.touchdown;
     maybePrefillBox();
-    detectStatus.textContent = `Found ${jumps.length} jumps. Review the set below, then save included jumps.`;
+    detectStatus.textContent = result.lowConfidence
+      ? `Found ${jumps.length} jumps but timings look off — check each one (see Advanced).`
+      : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`;
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
     else {

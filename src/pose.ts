@@ -3,6 +3,7 @@ import {
   coarseFrames,
   detectAllEvents,
   detectEvents,
+  groundModel,
   refineFrames,
   type DetectedEvents,
   type Detection,
@@ -12,6 +13,7 @@ import {
 } from "./detect.ts";
 import { emptyDiagnostics, median, type DetectDiagnostics } from "./detectDiag.ts";
 import { scanStep } from "./multiJump.ts";
+import { resolveJumpSet, type JumpTimingContext } from "./resolveJumps.ts";
 import type { FrameSeeker } from "./seek.ts";
 
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
@@ -209,6 +211,11 @@ export interface AnalyzeOptions {
   frameCount: number;
   onProgress: (message: string) => void;
   signal: AbortSignal;
+  /** Capture fps for real-time validation (e.g. 207). */
+  captureFps?: number;
+  /** Slow-mo stretch dividing presentation timestamps. */
+  stretch?: number;
+  frameTimes?: readonly number[];
 }
 
 interface SamplePass {
@@ -426,40 +433,69 @@ export async function analyzeMultiClip(
     maxJumps: 8,
   });
 
-  if (multi.ok && multi.jumps.length >= 2) {
+  const candidatePool = [
+    ...(single.diagnostics.candidates ?? []),
+    ...(multi.ok ? multi.diagnostics.candidates : []),
+  ];
+  // Dedupe by marks.
+  const seen = new Set<string>();
+  const candidates = candidatePool.filter((c) => {
+    const key = `${c.touchdown}:${c.takeoff}:${c.landing}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const timing: JumpTimingContext = {
+    captureFps: options.captureFps ?? 240,
+    stretch: options.stretch ?? 1,
+    frameTimes: options.frameTimes,
+  };
+  const stepOffHint =
+    single.ok && single.events.stepOff !== null
+      ? single.events.stepOff
+      : candidates.map((c) => c.stepOff).find((v) => v !== null) ?? null;
+
+  const resolved = resolveJumpSet(candidates, timing, { stepOffHint });
+  const diagBase: DetectDiagnostics = {
+    ...(single.ok ? single.diagnostics : multi.ok ? multi.diagnostics : single.diagnostics),
+    ...mergedDiag,
+    candidates: candidates.sort((a, b) => b.score - a.score),
+    notes: [
+      ...(single.diagnostics.notes ?? []),
+      ...resolved.notes,
+      ...resolved.rejected.slice(0, 4).map((r) => `Rejected TD${r.touchdown}: ${r.rejectReason}`),
+    ],
+    lowConfidence: resolved.lowConfidence || resolved.implausible,
+    rejectStage: resolved.jumps.length ? "ok" : single.diagnostics.rejectStage,
+  };
+
+  const jumpModel: GroundModel | null =
+    (single.ok ? single.model : null) ??
+    (multi.ok ? multi.model : null) ??
+    groundModel(merged);
+
+  if (!resolved.jumps.length || !jumpModel) {
     return {
-      ...multi,
-      diagnostics: {
-        ...multi.diagnostics,
-        ...mergedDiag,
-        candidates: multi.diagnostics.candidates,
-      },
+      ok: false,
+      reason:
+        (single.ok ? null : single.reason) ??
+        "Auto-detect could not find a physically plausible jump. Mark touchdown, takeoff, and landing by hand.",
+      diagnostics: diagBase,
     };
   }
-  if (single.ok) {
-    return {
-      ok: true,
-      jumps: [single.events],
-      model: single.model,
-      lowConfidence: single.lowConfidence,
-      diagnostics: single.diagnostics,
-    };
-  }
-  if (multi.ok && multi.jumps.length === 1) {
-    return {
-      ok: true,
-      jumps: multi.jumps,
-      model: multi.model,
-      lowConfidence: multi.lowConfidence ?? true,
-      diagnostics: { ...multi.diagnostics, ...mergedDiag },
-    };
-  }
+
   return {
-    ok: false,
-    reason:
-      (single.ok ? null : single.reason) ??
-      "Auto-detect could not find a jump. Mark touchdown, takeoff, and landing by hand.",
-    diagnostics: single.diagnostics,
+    ok: true,
+    jumps: resolved.jumps,
+    model: jumpModel,
+    lowConfidence: resolved.lowConfidence || resolved.implausible,
+    diagnostics: {
+      ...diagBase,
+      notes: resolved.implausible
+        ? [...diagBase.notes, "Result flagged — timings look wrong; adjust marks."]
+        : diagBase.notes,
+    },
   };
 }
 
