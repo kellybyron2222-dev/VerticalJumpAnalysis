@@ -572,6 +572,19 @@ legend {
   font-weight: 600;
 }
 
+.detect-diag {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card, #111) 92%, transparent);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-height: 14rem;
+}
+
 .build-line {
   margin-top: 0.75rem;
   color: var(--muted);

@@ -20,6 +20,7 @@ import { trialFormError } from "./form.ts";
 import { collectFrameTimes, transportEnabledAfterClockRead } from "./cadence.ts";
 import { parseMovClip } from "./mov.ts";
 import { analyzeMultiClip } from "./pose.ts";
+import { formatDetectDiagnostics, type DetectDiagnostics } from "./detectDiag.ts";
 import {
   buildMultiJumpRows,
   createSetId,
@@ -166,12 +167,25 @@ const chartJumpType = must<HTMLSelectElement>("#chart-jump-type");
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const detectStatus = must<HTMLElement>("#detect-status");
+const detectDiagEl = must<HTMLElement>("#detect-diag");
 const slowInput = must<HTMLInputElement>("#slowmo");
 const cadenceButton = must<HTMLButtonElement>("#detect-cadence");
 const cadenceStatus = must<HTMLElement>("#cadence-status");
 const timingReadout = must<HTMLElement>("#timing-readout");
 const boxEstimate = must<HTMLElement>("#box-estimate");
 const metricsWarning = must<HTMLElement>("#metrics-warning");
+
+function showDetectDiagnostics(diag: DetectDiagnostics | null | undefined): void {
+  if (!diag) {
+    detectDiagEl.hidden = true;
+    detectDiagEl.textContent = "";
+    return;
+  }
+  detectDiagEl.hidden = false;
+  detectDiagEl.textContent = formatDetectDiagnostics(diag);
+  const advanced = detectDiagEl.closest("details");
+  if (advanced instanceof HTMLDetailsElement) advanced.open = true;
+}
 
 video.playsInline = true;
 video.setAttribute("playsinline", "");
@@ -858,6 +872,7 @@ function loadFile(file: File): void {
   fpsInput.disabled = false;
   cancelDetect.hidden = true;
   detectStatus.textContent = "";
+  showDetectDiagnostics(null);
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
   const generation = loadGeneration;
@@ -1059,6 +1074,7 @@ async function runDetection(): Promise<void> {
   clearFeedback();
   multiJumpPanel.hidden = true;
   multiJumpRows = [];
+  showDetectDiagnostics(null);
   try {
     const result = await analyzeMultiClip({
       video,
@@ -1073,6 +1089,7 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = "Auto-detect cancelled.";
       return;
     }
+    showDetectDiagnostics(result.diagnostics);
     if (!result.ok) {
       detectStatus.textContent = `Auto-detect failed: ${result.reason}`;
       multiJumpPanel.hidden = true;
@@ -1091,8 +1108,9 @@ async function runDetection(): Promise<void> {
       marks.landing = events.landing;
       frame = events.touchdown;
       maybePrefillBox();
-      detectStatus.textContent =
-        "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
+      detectStatus.textContent = result.lowConfidence
+        ? "Low confidence marks set — check them with Go to / Set. Free-fall or contact looks marginal (see Advanced)."
+        : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it.";
       return;
     }
     multiJumpRows = buildMultiJumpRows(jumps, frameTimes ?? undefined, fps, stretch);

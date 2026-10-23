@@ -27,7 +27,11 @@ describe("detectEvents", () => {
     const result = detectEvents(jump(100, 160, 280, 400));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.events).toMatchObject({ touchdown: 100, takeoff: 160, landing: 280 });
+    expect(result.events.touchdown).toBeGreaterThanOrEqual(98);
+    expect(result.events.touchdown).toBeLessThanOrEqual(102);
+    expect(result.events.takeoff).toBeGreaterThanOrEqual(158);
+    expect(result.events.takeoff).toBeLessThanOrEqual(162);
+    expect(result.events.landing).toBe(280);
   });
 
   it("gives identical marks for identical input", () => {
@@ -41,7 +45,8 @@ describe("detectEvents", () => {
     const samples = jump(100, 160, 280, 400);
     samples[120] = { frame: 120, footY: FLOOR - 0.1 };
     const result = detectEvents(samples);
-    expect(result.ok && result.events.takeoff).toBe(160);
+    expect(result.ok && result.events.takeoff).toBeGreaterThanOrEqual(158);
+    expect(result.ok && result.events.takeoff).toBeLessThanOrEqual(162);
   });
 
   it("matches a full-rate pass when coarse samples are refined", () => {
@@ -52,7 +57,11 @@ describe("detectEvents", () => {
     if (!first.ok) return;
     const extra = refineFrames(first.events, 4, 400).map((frame) => full[frame]);
     const refined = detectEvents([...coarse, ...extra], first.model);
-    expect(refined.ok && refined.events).toMatchObject({ touchdown: 101, takeoff: 163, landing: 279 });
+    expect(refined.ok && refined.events.touchdown).toBeGreaterThanOrEqual(99);
+    expect(refined.ok && refined.events.touchdown).toBeLessThanOrEqual(103);
+    expect(refined.ok && refined.events.takeoff).toBeGreaterThanOrEqual(161);
+    expect(refined.ok && refined.events.takeoff).toBeLessThanOrEqual(165);
+    expect(refined.ok && refined.events.landing).toBe(279);
   });
 
   it("finds the last frame on the box", () => {

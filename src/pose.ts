@@ -10,6 +10,7 @@ import {
   type GroundModel,
   type MultiDetection,
 } from "./detect.ts";
+import { emptyDiagnostics, median, type DetectDiagnostics } from "./detectDiag.ts";
 import { scanStep } from "./multiJump.ts";
 import type { FrameSeeker } from "./seek.ts";
 
@@ -17,30 +18,26 @@ const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/was
 const MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task";
 
-/** Ankles + heels only — skip foot-index (toes); dark shoes often hide them. */
 const ANKLE_HEEL = [27, 29, 28, 30];
 const LEFT_ANKLE_HEEL = [27, 29];
 const RIGHT_ANKLE_HEEL = [28, 30];
+const ANKLES = [27, 28];
+const HEELS = [29, 30];
 const KNEES = [25, 26];
 const HIPS = [23, 24];
-/** Low bar so black shoes / busy backgrounds still yield a trajectory. */
-const MIN_VISIBILITY = 0.18;
-const MIN_VISIBILITY_PROXY = 0.12;
-/** Longest edge of the frame passed to the model; fixed so runs are identical. */
+/** Very low so black shoes / busy gym backgrounds still yield a track. */
+const MIN_VISIBILITY = 0.08;
+const MIN_VISIBILITY_PROXY = 0.05;
 const INPUT_EDGE = 512;
 
 let landmarkerPromise: Promise<PoseLandmarker> | null = null;
 
-/**
- * IMAGE mode on CPU: each frame is scored on its own with no tracking state,
- * so the same frame gives the same landmarks regardless of visit order.
- */
 function loadLandmarker(): Promise<PoseLandmarker> {
   landmarkerPromise ??= FilesetResolver.forVisionTasks(WASM_URL).then((fileset) =>
     PoseLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
       runningMode: "IMAGE",
-      numPoses: 1,
+      numPoses: 2,
     }),
   );
   landmarkerPromise.catch(() => {
@@ -79,12 +76,88 @@ function meanPoint(
   return n > 0 ? sum / n : null;
 }
 
+function meanVisibility(
+  landmarks: readonly NormalizedLandmark[],
+  indexes: readonly number[],
+): number | null {
+  let sum = 0;
+  let n = 0;
+  for (const index of indexes) {
+    const point = landmarks[index];
+    if (!point || point.visibility === undefined) continue;
+    sum += point.visibility;
+    n += 1;
+  }
+  return n > 0 ? sum / n : null;
+}
+
+/** Bounding-box area of visible landmarks — larger = more likely the athlete. */
+export function poseExtent(landmarks: readonly NormalizedLandmark[]): number {
+  let minX = 1;
+  let maxX = 0;
+  let minY = 1;
+  let maxY = 0;
+  let n = 0;
+  for (const point of landmarks) {
+    if (!point || (point.visibility ?? 0) < MIN_VISIBILITY_PROXY) continue;
+    n += 1;
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+    if (point.y < minY) minY = point.y;
+    if (point.y > maxY) maxY = point.y;
+  }
+  if (n < 4) return 0;
+  return Math.max(0, maxX - minX) * Math.max(0, maxY - minY);
+}
+
+export function poseCentroid(
+  landmarks: readonly NormalizedLandmark[],
+): { x: number; y: number } | null {
+  let sx = 0;
+  let sy = 0;
+  let n = 0;
+  for (const index of HIPS) {
+    const point = landmarks[index];
+    if (!point || (point.visibility ?? 1) < MIN_VISIBILITY_PROXY) continue;
+    sx += point.x;
+    sy += point.y;
+    n += 1;
+  }
+  if (n === 0) return null;
+  return { x: sx / n, y: sy / n };
+}
+
+/**
+ * Prefer the largest pose; when a previous track exists, prefer the closest
+ * centroid so racks/boxes do not steal the athlete mid-clip.
+ */
+export function pickBestPose(
+  poses: readonly (readonly NormalizedLandmark[])[],
+  prev: { x: number; y: number } | null,
+): { landmarks: readonly NormalizedLandmark[]; centroid: { x: number; y: number } } | null {
+  let best: { landmarks: readonly NormalizedLandmark[]; centroid: { x: number; y: number }; score: number } | null =
+    null;
+  for (const landmarks of poses) {
+    if (!landmarks?.length) continue;
+    const extent = poseExtent(landmarks);
+    if (extent <= 0) continue;
+    const centroid = poseCentroid(landmarks);
+    if (!centroid) continue;
+    let score = extent * 10;
+    if (prev) {
+      const dist = Math.hypot(centroid.x - prev.x, centroid.y - prev.y);
+      score += Math.max(0, 2 - dist * 4);
+    }
+    if (!best || score > best.score) best = { landmarks, centroid, score };
+  }
+  return best ? { landmarks: best.landmarks, centroid: best.centroid } : null;
+}
+
 export function footY(landmarks: readonly NormalizedLandmark[] | undefined): number | null {
   if (!landmarks) return null;
   return lowestPoint(landmarks, ANKLE_HEEL, MIN_VISIBILITY);
 }
 
-/** The higher of the two feet (ankle/heel), when both sides are visible. */
 export function upperFootY(landmarks: readonly NormalizedLandmark[] | undefined): number | null {
   if (!landmarks) return null;
   const left = lowestPoint(landmarks, LEFT_ANKLE_HEEL, MIN_VISIBILITY);
@@ -93,11 +166,22 @@ export function upperFootY(landmarks: readonly NormalizedLandmark[] | undefined)
   return Math.min(left, right);
 }
 
-/**
- * Contact / body-height signal for event detection. Prefers ankle/heel, then
- * knee, then hip (larger Y = lower in the frame). Hip alone still tracks the
- * drop and rebound when feet are invisible on a black floor.
- */
+export interface LandmarkVisStats {
+  ankle: number | null;
+  heel: number | null;
+  knee: number | null;
+  hip: number | null;
+}
+
+export function visibilityStats(landmarks: readonly NormalizedLandmark[]): LandmarkVisStats {
+  return {
+    ankle: meanVisibility(landmarks, ANKLES),
+    heel: meanVisibility(landmarks, HEELS),
+    knee: meanVisibility(landmarks, KNEES),
+    hip: meanVisibility(landmarks, HIPS),
+  };
+}
+
 export function sampleFromLandmarks(
   landmarks: readonly NormalizedLandmark[] | undefined,
   frame: number,
@@ -110,7 +194,6 @@ export function sampleFromLandmarks(
 
   let contact: number | null = feet;
   if (contact === null && knees !== null) contact = knees;
-  // Hip is higher in the frame; bias downward so ground quantiles stay usable.
   if (contact === null && hip !== null) contact = Math.min(0.98, hip + 0.28);
   if (contact === null) return null;
 
@@ -128,6 +211,16 @@ export interface AnalyzeOptions {
   signal: AbortSignal;
 }
 
+interface SamplePass {
+  samples: FootSample[];
+  framesScanned: number;
+  framesWithPerson: number;
+  ankleVis: number[];
+  heelVis: number[];
+  kneeVis: number[];
+  hipVis: number[];
+}
+
 async function sampleFrames(
   landmarker: PoseLandmarker,
   video: HTMLVideoElement,
@@ -138,19 +231,46 @@ async function sampleFrames(
   signal: AbortSignal,
   onProgress: (message: string) => void,
   label: string,
-): Promise<FootSample[]> {
+  prevCentroid: { x: number; y: number } | null,
+): Promise<SamplePass & { lastCentroid: { x: number; y: number } | null }> {
   const samples: FootSample[] = [];
+  const ankleVis: number[] = [];
+  const heelVis: number[] = [];
+  const kneeVis: number[] = [];
+  const hipVis: number[] = [];
+  let framesWithPerson = 0;
+  let lastCentroid = prevCentroid;
+
   for (let i = 0; i < frames.length; i += 1) {
     if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
     const frame = frames[i]!;
     await seeker.settle(frame);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     const result = landmarker.detect(canvas);
-    const sample = sampleFromLandmarks(result.landmarks[0], frame);
-    if (sample) samples.push(sample);
+    const picked = pickBestPose(result.landmarks ?? [], lastCentroid);
+    if (picked) {
+      framesWithPerson += 1;
+      lastCentroid = picked.centroid;
+      const vis = visibilityStats(picked.landmarks);
+      if (vis.ankle !== null) ankleVis.push(vis.ankle);
+      if (vis.heel !== null) heelVis.push(vis.heel);
+      if (vis.knee !== null) kneeVis.push(vis.knee);
+      if (vis.hip !== null) hipVis.push(vis.hip);
+      const sample = sampleFromLandmarks(picked.landmarks, frame);
+      if (sample) samples.push(sample);
+    }
     if (i % 8 === 0) onProgress(`${label} ${i + 1} / ${frames.length}`);
   }
-  return samples;
+  return {
+    samples,
+    framesScanned: frames.length,
+    framesWithPerson,
+    ankleVis,
+    heelVis,
+    kneeVis,
+    hipVis,
+    lastCentroid,
+  };
 }
 
 function prepareCanvas(video: HTMLVideoElement): {
@@ -166,6 +286,31 @@ function prepareCanvas(video: HTMLVideoElement): {
   return { canvas, context };
 }
 
+function mergeDiag(passes: SamplePass[]): Partial<DetectDiagnostics> {
+  const ankle: number[] = [];
+  const heel: number[] = [];
+  const knee: number[] = [];
+  const hip: number[] = [];
+  let scanned = 0;
+  let withPerson = 0;
+  for (const pass of passes) {
+    scanned += pass.framesScanned;
+    withPerson += pass.framesWithPerson;
+    ankle.push(...pass.ankleVis);
+    heel.push(...pass.heelVis);
+    knee.push(...pass.kneeVis);
+    hip.push(...pass.hipVis);
+  }
+  return {
+    framesScanned: scanned,
+    framesWithPerson: withPerson,
+    medianAnkleVis: median(ankle),
+    medianHeelVis: median(heel),
+    medianKneeVis: median(knee),
+    medianHipVis: median(hip),
+  };
+}
+
 export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
   const multi = await analyzeMultiClip(options);
   if (!multi.ok) return multi;
@@ -174,14 +319,21 @@ export async function analyzeClip(options: AnalyzeOptions): Promise<Detection> {
     return {
       ok: false,
       reason: "No jump found. Mark touchdown, takeoff, and landing by hand.",
+      diagnostics: multi.diagnostics,
     };
   }
-  return { ok: true, model: multi.model, events };
+  return {
+    ok: true,
+    model: multi.model,
+    events,
+    lowConfidence: multi.lowConfidence,
+    diagnostics: multi.diagnostics,
+  };
 }
 
 /**
- * Scan the clip (coarse then refine). Always runs the classic single-jump
- * detector; multi-jump UI only when 2+ clear cycles are found.
+ * Scan the clip (coarse then refine). Classic single-jump first; multi only
+ * when 2+ clear cycles. Always attaches diagnostics for the Advanced panel.
  */
 export async function analyzeMultiClip(
   options: AnalyzeOptions,
@@ -190,14 +342,19 @@ export async function analyzeMultiClip(
   onProgress("Loading pose model…");
   const landmarker = await loadLandmarker();
   const prepared = prepareCanvas(video);
-  if (!prepared) return { ok: false, reason: "Canvas is not available. Mark events by hand." };
+  if (!prepared) {
+    return {
+      ok: false,
+      reason: "Canvas is not available. Mark events by hand.",
+      diagnostics: emptyDiagnostics({ rejectStage: "no_samples" }),
+    };
+  }
   const { canvas, context } = prepared;
 
-  // Short single-jump clips stay at full rate; long clips coarse-scan first.
   const step = frameCount <= 800 ? 1 : scanStep(frameCount);
   const coarse = coarseFrames(frameCount, step);
   onProgress(`Scanning ${coarse.length} frames…`);
-  const coarseSamples = await sampleFrames(
+  const coarsePass = await sampleFrames(
     landmarker,
     video,
     seeker,
@@ -207,32 +364,38 @@ export async function analyzeMultiClip(
     signal,
     onProgress,
     "Scan",
+    null,
   );
 
-  if (coarseSamples.length < 8) {
+  const scanDiag = mergeDiag([coarsePass]);
+  if (coarsePass.samples.length < 5) {
     return {
       ok: false,
       reason:
-        "Pose saw too few body landmarks (dark shoes or busy background). Mark touchdown, takeoff, and landing by hand.",
+        "Pose saw too few body landmarks (dark shoes, busy background, or wrong subject). Mark events by hand.",
+      diagnostics: emptyDiagnostics({
+        ...scanDiag,
+        rejectStage: "no_samples",
+        notes: ["Increase lighting or mark manually."],
+      }),
     };
   }
 
-  // Prefer classic single-jump path (handles mid-drop starts at frame 0).
-  let single = detectEvents(coarseSamples);
+  let single = detectEvents(coarsePass.samples, undefined, 3, scanDiag);
   const refineTargets: DetectedEvents[] = [];
   if (single.ok) refineTargets.push(single.events);
-  const multiCoarse = detectAllEvents(coarseSamples, { maxJumps: 8 });
+  const multiCoarse = detectAllEvents(coarsePass.samples, { maxJumps: 8 });
   if (multiCoarse.ok && multiCoarse.jumps.length >= 2) {
     for (const jump of multiCoarse.jumps) refineTargets.push(jump);
   }
 
   if (refineTargets.length === 0) {
+    // Still try to surface low-confidence single if detectEvents proposed none
+    // but diagnostics have candidates — detectEvents already proposes ≥3.
     return {
       ok: false,
-      reason:
-        single.ok === false
-          ? `${single.reason}`
-          : "No jump found. Mark touchdown, takeoff, and landing by hand.",
+      reason: single.ok === false ? single.reason : "No jump found. Mark events by hand.",
+      diagnostics: single.diagnostics,
     };
   }
 
@@ -242,7 +405,7 @@ export async function analyzeMultiClip(
   }
   const refineList = [...refineSet].sort((a, b) => a - b);
   onProgress(`Refining ${refineList.length} frames…`);
-  const fineSamples = await sampleFrames(
+  const finePass = await sampleFrames(
     landmarker,
     video,
     seeker,
@@ -252,26 +415,51 @@ export async function analyzeMultiClip(
     signal,
     onProgress,
     "Refine",
+    coarsePass.lastCentroid,
   );
 
-  const merged = [...coarseSamples, ...fineSamples];
-  single = detectEvents(merged, single.ok ? single.model : undefined);
+  const merged = [...coarsePass.samples, ...finePass.samples];
+  const mergedDiag = mergeDiag([coarsePass, finePass]);
+  single = detectEvents(merged, single.ok ? single.model : undefined, 3, mergedDiag);
   const multi = detectAllEvents(merged, {
     fixedModel: multiCoarse.ok ? multiCoarse.model : single.ok ? single.model : undefined,
     maxJumps: 8,
   });
 
-  // Multi-jump only when 2+ clear cycles; otherwise keep the single-jump path.
-  if (multi.ok && multi.jumps.length >= 2) return multi;
-  if (single.ok) return { ok: true, jumps: [single.events], model: single.model };
+  if (multi.ok && multi.jumps.length >= 2) {
+    return {
+      ...multi,
+      diagnostics: {
+        ...multi.diagnostics,
+        ...mergedDiag,
+        candidates: multi.diagnostics.candidates,
+      },
+    };
+  }
+  if (single.ok) {
+    return {
+      ok: true,
+      jumps: [single.events],
+      model: single.model,
+      lowConfidence: single.lowConfidence,
+      diagnostics: single.diagnostics,
+    };
+  }
   if (multi.ok && multi.jumps.length === 1) {
-    return { ok: true, jumps: multi.jumps, model: multi.model };
+    return {
+      ok: true,
+      jumps: multi.jumps,
+      model: multi.model,
+      lowConfidence: multi.lowConfidence ?? true,
+      diagnostics: { ...multi.diagnostics, ...mergedDiag },
+    };
   }
   return {
     ok: false,
     reason:
       (single.ok ? null : single.reason) ??
       "Auto-detect could not find a jump. Mark touchdown, takeoff, and landing by hand.",
+    diagnostics: single.diagnostics,
   };
 }
 

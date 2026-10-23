@@ -1,3 +1,11 @@
+import {
+  emptyDiagnostics,
+  eventsFromCandidate,
+  scoreJumpCycle,
+  type DetectCandidate,
+  type DetectDiagnostics,
+} from "./detectDiag.ts";
+
 /**
  * One pose sample. `footY` is the contact signal in normalized image
  * coordinates (0 = top, 1 = bottom): lowest visible foot/ankle/heel, or a
@@ -30,10 +38,18 @@ export interface DetectedEvents {
 }
 
 export type Detection =
-  | { ok: true; events: DetectedEvents; model: GroundModel }
-  | { ok: false; reason: string };
+  | {
+      ok: true;
+      events: DetectedEvents;
+      model: GroundModel;
+      diagnostics: DetectDiagnostics;
+      lowConfidence?: boolean;
+    }
+  | { ok: false; reason: string; diagnostics: DetectDiagnostics };
 
-const MIN_SAMPLES = 8;
+const MIN_SAMPLES = 5;
+/** Loose default so short GCT / coarse scans still find takeoff. */
+const DEFAULT_MIN_AIR = 3;
 
 function sortedSamples(samples: readonly FootSample[]): FootSample[] {
   const byFrame = new Map<number, FootSample>();
@@ -55,20 +71,15 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
   return [...byFrame.values()].sort((a, b) => a.frame - b.frame);
 }
 
-/**
- * Last frame at box level before touchdown. Box level is the median of the
- * first tenth of the clip; the tolerance is tight because free fall starts
- * slowly, so a loose one would mark step-off late.
- */
 function findStepOff(ordered: readonly FootSample[], tdIndex: number, ground: number): number | null {
   const level = (sample: FootSample) => sample.upperFootY ?? sample.footY;
   const head = ordered.slice(0, Math.max(3, Math.floor(ordered.length * 0.1))).map(level);
   const box = quantile(head, 0.5);
   const drop = ground - box;
-  if (drop < 0.02) return null;
-  const tolerance = Math.min(0.01, Math.max(0.003, drop * 0.03));
+  if (drop < 0.015) return null;
+  const tolerance = Math.min(0.012, Math.max(0.003, drop * 0.04));
   for (let k = tdIndex - 1; k >= 0; k -= 1) {
-    if (level(ordered[k]) <= box + tolerance) return ordered[k].frame;
+    if (level(ordered[k]!) <= box + tolerance) return ordered[k]!.frame;
   }
   return null;
 }
@@ -79,11 +90,6 @@ function quantile(values: readonly number[], q: number): number {
   return sorted[index]!;
 }
 
-/**
- * Floor level is a high quantile of the contact signal. Prefer the latter
- * part of the clip so a mid-drop start (already falling at frame 0) does not
- * pull the floor estimate up toward the box.
- */
 export function groundModel(samples: readonly FootSample[]): GroundModel | null {
   const ordered = sortedSamples(samples);
   if (ordered.length < MIN_SAMPLES) return null;
@@ -94,8 +100,7 @@ export function groundModel(samples: readonly FootSample[]): GroundModel | null 
   const head = ys.slice(0, Math.max(3, Math.floor(ys.length * 0.1)));
   const start = quantile(head, 0.5);
   const drop = ground - start;
-  // Mid-drop starts have a small apparent drop; keep a usable contact band.
-  const tolerance = Math.min(0.045, Math.max(0.012, Math.abs(drop) * 0.25 || 0.02));
+  const tolerance = Math.min(0.04, Math.max(0.012, Math.abs(drop) * 0.22 || 0.018));
   return { ground, start, tolerance };
 }
 
@@ -105,14 +110,13 @@ function contactHelpers(ordered: readonly FootSample[], onGround: readonly boole
     while (index < ordered.length && !onGround[index]) index += 1;
     return index;
   };
-  // Brief foot blips off the floor during contact are landmark noise, not a takeoff.
   const nextAir = (from: number): number => {
     let index = from;
     while (index < ordered.length) {
       while (index < ordered.length && onGround[index]) index += 1;
       if (index >= ordered.length) return index;
       const back = nextContact(index);
-      const lastAirFrame = back < ordered.length ? ordered[back].frame : Infinity;
+      const lastAirFrame = back < ordered.length ? ordered[back]!.frame : Infinity;
       if (lastAirFrame - ordered[index]!.frame >= minAirFrames) return index;
       index = back;
     }
@@ -121,9 +125,6 @@ function contactHelpers(ordered: readonly FootSample[], onGround: readonly boole
   return { nextContact, nextAir };
 }
 
-/**
- * Last frame on the box before touchdown, searching only within [fromIndex, tdIndex).
- */
 function findStepOffInRange(
   ordered: readonly FootSample[],
   tdIndex: number,
@@ -136,8 +137,8 @@ function findStepOffInRange(
   const head = window.slice(0, Math.max(3, Math.floor(window.length * 0.25))).map(level);
   const box = quantile(head, 0.5);
   const drop = ground - box;
-  if (drop < 0.02) return null;
-  const tolerance = Math.min(0.01, Math.max(0.003, drop * 0.03));
+  if (drop < 0.015) return null;
+  const tolerance = Math.min(0.012, Math.max(0.003, drop * 0.04));
   for (let k = tdIndex - 1; k >= fromIndex; k -= 1) {
     if (level(ordered[k]!) <= box + tolerance) return ordered[k]!.frame;
   }
@@ -148,81 +149,209 @@ function buildOnGround(ordered: readonly FootSample[], model: GroundModel): bool
   return ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
 }
 
+function hipRange(ordered: readonly FootSample[]): { min: number | null; max: number | null } {
+  const hips = ordered.map((s) => s.hipY).filter((v): v is number => v !== undefined && Number.isFinite(v));
+  if (!hips.length) return { min: null, max: null };
+  return { min: Math.min(...hips), max: Math.max(...hips) };
+}
+
+function scoreCandidate(
+  ordered: readonly FootSample[],
+  model: GroundModel,
+  tdIndex: number,
+  toIndex: number,
+  ldIndex: number,
+  searchFrom: number,
+): DetectCandidate {
+  const touchdown = ordered[tdIndex]!.frame;
+  const takeoff = ordered[toIndex]!.frame;
+  const landing = ordered[ldIndex]!.frame;
+  const scored = scoreJumpCycle(touchdown, takeoff, landing);
+  const toY = ordered[toIndex]!.footY;
+  const fromFloor = toY >= model.ground - model.tolerance * 2 ? 10 : 0;
+  let minY = 1;
+  let maxY = 0;
+  for (let k = toIndex; k <= ldIndex; k += 1) {
+    const y = ordered[k]!.footY;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  const swingBonus = Math.min(8, (maxY - minY) * 30);
+  return {
+    stepOff: findStepOffInRange(ordered, tdIndex, searchFrom, model.ground),
+    touchdown,
+    takeoff,
+    landing,
+    score: scored.score + fromFloor + swingBonus,
+    note: fromFloor ? scored.note : `${scored.note}; takeoff not from floor`,
+  };
+}
+
+/** Enumerate TD/TO/LD cycles, including rebound-centric search after walking lead-ins. */
+export function enumerateJumpCycles(
+  samples: readonly FootSample[],
+  options: { fixedModel?: GroundModel; minAirFrames?: number; maxJumps?: number } = {},
+): { model: GroundModel | null; candidates: DetectCandidate[]; ordered: FootSample[] } {
+  const minAirFrames = options.minAirFrames ?? DEFAULT_MIN_AIR;
+  const maxJumps = options.maxJumps ?? 12;
+  const ordered = sortedSamples(samples);
+  const model = options.fixedModel ?? groundModel(ordered);
+  if (!model) return { model: null, candidates: [], ordered };
+
+  const onGround = buildOnGround(ordered, model);
+  const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
+  const candidates: DetectCandidate[] = [];
+  const seen = new Set<string>();
+  const pushUnique = (cand: DetectCandidate) => {
+    const key = `${cand.touchdown}:${cand.takeoff}:${cand.landing}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(cand);
+  };
+
+  let i = 0;
+  let searchFrom = 0;
+  while (candidates.length < maxJumps && i < ordered.length) {
+    while (i < ordered.length && onGround[i]) i += 1;
+    if (i >= ordered.length) break;
+
+    const tdIndex = nextContact(i);
+    if (tdIndex >= ordered.length) break;
+    const toIndex = nextAir(tdIndex);
+    if (toIndex >= ordered.length) break;
+    const ldIndex = nextContact(toIndex);
+    if (ldIndex >= ordered.length) break;
+
+    pushUnique(scoreCandidate(ordered, model, tdIndex, toIndex, ldIndex, searchFrom));
+    searchFrom = ldIndex;
+    // Only skip far ahead for strong floor-takeoff cycles; weak ones may have
+    // stolen the real touchdown as "landing".
+    const last = candidates[candidates.length - 1]!;
+    i = last.score >= 20 && last.note === "ok"
+      ? Math.min(ordered.length, ldIndex + 1)
+      : Math.min(ordered.length, tdIndex + 1);
+  }
+
+  // Rebound-centric pass: takeoff must leave the floor, then landing, then
+  // touchdown = start of that contact run (survives walking → box false cycles).
+  for (let toIndex = 1; toIndex < ordered.length && candidates.length < maxJumps * 2; toIndex += 1) {
+    if (!onGround[toIndex - 1] || onGround[toIndex]) continue;
+    const toY = ordered[toIndex]!.footY;
+    if (toY < model.ground - model.tolerance * 2) continue; // not leaving the floor
+    // Duration of this air must look like a flight.
+    const ldIndex = nextContact(toIndex);
+    if (ldIndex >= ordered.length) continue;
+    if (ordered[ldIndex]!.frame - ordered[toIndex]!.frame < minAirFrames) continue;
+    // Contact run immediately before takeoff.
+    let tdIndex = toIndex - 1;
+    while (tdIndex > 0 && onGround[tdIndex - 1]) tdIndex -= 1;
+    if (tdIndex >= toIndex) continue;
+    pushUnique(scoreCandidate(ordered, model, tdIndex, toIndex, ldIndex, 0));
+  }
+
+  return { model, candidates, ordered };
+}
+
 /**
- * Classic single-jump detector. Handles clips that start mid-drop (already
- * in the air at frame 0) — no standing period is required before touchdown.
+ * Classic single-jump detector. Picks the best cycle (not always the first),
+ * so a walking/turning lead-in does not steal the real drop jump. Proposes
+ * low-confidence marks when the best cycle is marginal instead of refusing.
  */
 export function detectEvents(
   samples: readonly FootSample[],
   fixedModel?: GroundModel,
-  minAirFrames = 6,
+  minAirFrames = DEFAULT_MIN_AIR,
+  baseDiag?: Partial<DetectDiagnostics>,
 ): Detection {
-  const ordered = sortedSamples(samples);
-  const model = fixedModel ?? groundModel(ordered);
+  const hips = hipRange(sortedSamples(samples));
+  const base = emptyDiagnostics({
+    ...baseDiag,
+    hipYMin: baseDiag?.hipYMin ?? hips.min,
+    hipYMax: baseDiag?.hipYMax ?? hips.max,
+    framesWithPerson: baseDiag?.framesWithPerson ?? sortedSamples(samples).length,
+  });
+
+  const { model, candidates, ordered } = enumerateJumpCycles(samples, { fixedModel, minAirFrames });
   if (!model) {
     return {
       ok: false,
       reason:
         "Not enough pose samples with a visible body. Try again, or mark touchdown, takeoff, and landing by hand.",
+      diagnostics: { ...base, rejectStage: "no_samples", candidates: [] },
     };
   }
 
-  const onGround = buildOnGround(ordered, model);
-  const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
+  const ranked = [...candidates].sort((a, b) => b.score - a.score);
+  const diag: DetectDiagnostics = {
+    ...base,
+    candidates: ranked,
+    hipYMin: hips.min,
+    hipYMax: hips.max,
+    framesWithPerson: ordered.length,
+  };
 
-  // Start mid-air (common when the recording begins at step-off): do not skip.
-  // Start on the box/floor: skip to the first leave, then find touchdown.
-  let i = 0;
-  while (i < ordered.length && onGround[i]) i += 1;
-  if (i === ordered.length) {
+  if (ranked.length === 0) {
+    const anyLeave = ordered.some((s) => s.footY < model.ground - model.tolerance);
     return {
       ok: false,
-      reason:
-        "Could not see the feet leave the floor. Mark step-off, touchdown, takeoff, and landing by hand.",
+      reason: anyLeave
+        ? "Saw motion but no rebound (touchdown → takeoff → landing). Mark events by hand."
+        : "Could not see the feet leave the floor (no drop). Mark events by hand.",
+      diagnostics: {
+        ...diag,
+        rejectStage: anyLeave ? "no_rebound" : "no_drop",
+      },
     };
   }
 
-  const tdIndex = nextContact(i);
-  if (tdIndex >= ordered.length) {
+  const best = ranked[0]!;
+  const scored = scoreJumpCycle(best.touchdown, best.takeoff, best.landing);
+
+  if (best.score >= 10) {
     return {
-      ok: false,
-      reason: "No touchdown found. Mark touchdown, takeoff, and landing by hand.",
+      ok: true,
+      model,
+      events: eventsFromCandidate(best),
+      lowConfidence: false,
+      diagnostics: { ...diag, rejectStage: "ok", lowConfidence: false },
     };
   }
-  const toIndex = nextAir(tdIndex);
-  if (toIndex >= ordered.length) {
+
+  // Marginal but proposable — place marks and flag low confidence.
+  if (best.score >= 3) {
     return {
-      ok: false,
-      reason: "No takeoff found after contact. Mark takeoff and landing by hand.",
-    };
-  }
-  const ldIndex = nextContact(toIndex);
-  if (ldIndex >= ordered.length) {
-    return {
-      ok: false,
-      reason: "No landing found after the flight. Mark landing by hand.",
+      ok: true,
+      model,
+      events: eventsFromCandidate(best),
+      lowConfidence: true,
+      diagnostics: {
+        ...diag,
+        rejectStage: scored.stage === "ok" ? "contact_out_of_range" : scored.stage,
+        lowConfidence: true,
+        notes: [...diag.notes, "Low confidence marks — check them.", scored.note],
+      },
     };
   }
 
   return {
-    ok: true,
-    model,
-    events: {
-      stepOff: findStepOff(ordered, tdIndex, model.ground),
-      touchdown: ordered[tdIndex]!.frame,
-      takeoff: ordered[toIndex]!.frame,
-      landing: ordered[ldIndex]!.frame,
-    },
+    ok: false,
+    reason: `Best candidate rejected (${scored.note}). Mark touchdown, takeoff, and landing by hand.`,
+    diagnostics: { ...diag, rejectStage: scored.stage, lowConfidence: true },
   };
 }
 
 export type MultiDetection =
-  | { ok: true; jumps: DetectedEvents[]; model: GroundModel }
-  | { ok: false; reason: string };
+  | {
+      ok: true;
+      jumps: DetectedEvents[];
+      model: GroundModel;
+      diagnostics: DetectDiagnostics;
+      lowConfidence?: boolean;
+    }
+  | { ok: false; reason: string; diagnostics: DetectDiagnostics };
 
 /**
- * Find every drop/depth cycle in one clip. Splits between jumps on standing
- * periods after landing. Not used for single-jump clips (see detectEvents).
+ * Find every drop/depth cycle. Splits on standing; used only when 2+ clear jumps.
  */
 export function detectAllEvents(
   samples: readonly FootSample[],
@@ -233,22 +362,29 @@ export function detectAllEvents(
     maxJumps?: number;
   } = {},
 ): MultiDetection {
-  const minAirFrames = options.minAirFrames ?? 6;
-  const minStandFrames = options.minStandFrames ?? 12;
+  const minAirFrames = options.minAirFrames ?? DEFAULT_MIN_AIR;
+  const minStandFrames = options.minStandFrames ?? 10;
   const maxJumps = options.maxJumps ?? 8;
   const ordered = sortedSamples(samples);
+  const hips = hipRange(ordered);
+  const base = emptyDiagnostics({
+    framesWithPerson: ordered.length,
+    hipYMin: hips.min,
+    hipYMax: hips.max,
+  });
   const model = options.fixedModel ?? groundModel(ordered);
   if (!model) {
     return {
       ok: false,
-      reason:
-        "Not enough pose samples with a visible body. Try again, or mark events by hand.",
+      reason: "Not enough pose samples with a visible body. Mark events by hand.",
+      diagnostics: { ...base, rejectStage: "no_samples" },
     };
   }
 
   const onGround = buildOnGround(ordered, model);
   const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
   const jumps: DetectedEvents[] = [];
+  const candidates: DetectCandidate[] = [];
   let i = 0;
   let searchFrom = 0;
 
@@ -263,12 +399,20 @@ export function detectAllEvents(
     const ldIndex = nextContact(toIndex);
     if (ldIndex >= ordered.length) break;
 
-    jumps.push({
+    const touchdown = ordered[tdIndex]!.frame;
+    const takeoff = ordered[toIndex]!.frame;
+    const landing = ordered[ldIndex]!.frame;
+    const scored = scoreJumpCycle(touchdown, takeoff, landing);
+    const cand: DetectCandidate = {
       stepOff: findStepOffInRange(ordered, tdIndex, searchFrom, model.ground),
-      touchdown: ordered[tdIndex]!.frame,
-      takeoff: ordered[toIndex]!.frame,
-      landing: ordered[ldIndex]!.frame,
-    });
+      touchdown,
+      takeoff,
+      landing,
+      score: scored.score,
+      note: scored.note,
+    };
+    candidates.push(cand);
+    if (scored.score >= 10) jumps.push(eventsFromCandidate(cand));
 
     let stand = 0;
     let j = ldIndex;
@@ -284,16 +428,37 @@ export function detectAllEvents(
     i = ldIndex;
   }
 
+  const diag: DetectDiagnostics = {
+    ...base,
+    candidates: [...candidates].sort((a, b) => b.score - a.score),
+  };
+
   if (jumps.length === 0) {
+    // Fall back: propose best single low-confidence jump if any.
+    const ranked = [...candidates].sort((a, b) => b.score - a.score);
+    if (ranked[0] && ranked[0].score >= 3) {
+      return {
+        ok: true,
+        model,
+        jumps: [eventsFromCandidate(ranked[0])],
+        lowConfidence: true,
+        diagnostics: {
+          ...diag,
+          rejectStage: "ok",
+          lowConfidence: true,
+          notes: ["Low confidence multi-path fallback."],
+        },
+      };
+    }
     return {
       ok: false,
       reason: "No jump cycle found. Mark touchdown, takeoff, and landing by hand.",
+      diagnostics: { ...diag, rejectStage: "no_rebound" },
     };
   }
-  return { ok: true, model, jumps };
+  return { ok: true, model, jumps, diagnostics: { ...diag, rejectStage: "ok" } };
 }
 
-/** Frames to sample at full resolution around each coarse event. */
 export function refineFrames(events: DetectedEvents, step: number, frameCount: number): number[] {
   const frames = new Set<number>();
   const marks = [events.stepOff, events.touchdown, events.takeoff, events.landing];
