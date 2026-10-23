@@ -17,8 +17,15 @@ import { resolveJumpSet, type JumpTimingContext } from "./resolveJumps.ts";
 import type { FrameSeeker } from "./seek.ts";
 
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
-const MODEL_URL =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task";
+
+/** Default lite; heavy only when High accuracy is on (lazy-loaded). */
+export type PoseModelQuality = "lite" | "heavy";
+
+const MODEL_URLS: Record<PoseModelQuality, string> = {
+  lite: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+  heavy:
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
+};
 
 const ANKLE_HEEL = [27, 29, 28, 30];
 const LEFT_ANKLE_HEEL = [27, 29];
@@ -32,20 +39,24 @@ const MIN_VISIBILITY = 0.08;
 const MIN_VISIBILITY_PROXY = 0.05;
 const INPUT_EDGE = 512;
 
-let landmarkerPromise: Promise<PoseLandmarker> | null = null;
+const landmarkerByQuality = new Map<PoseModelQuality, Promise<PoseLandmarker>>();
 
-function loadLandmarker(): Promise<PoseLandmarker> {
-  landmarkerPromise ??= FilesetResolver.forVisionTasks(WASM_URL).then((fileset) =>
-    PoseLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: "CPU" },
-      runningMode: "IMAGE",
-      numPoses: 2,
-    }),
-  );
-  landmarkerPromise.catch(() => {
-    landmarkerPromise = null;
-  });
-  return landmarkerPromise;
+function loadLandmarker(quality: PoseModelQuality = "lite"): Promise<PoseLandmarker> {
+  let pending = landmarkerByQuality.get(quality);
+  if (!pending) {
+    pending = FilesetResolver.forVisionTasks(WASM_URL).then((fileset) =>
+      PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: MODEL_URLS[quality], delegate: "CPU" },
+        runningMode: "IMAGE",
+        numPoses: 2,
+      }),
+    );
+    pending.catch(() => {
+      landmarkerByQuality.delete(quality);
+    });
+    landmarkerByQuality.set(quality, pending);
+  }
+  return pending;
 }
 
 function lowestPoint(
@@ -216,6 +227,8 @@ export interface AnalyzeOptions {
   /** Slow-mo stretch dividing presentation timestamps. */
   stretch?: number;
   frameTimes?: readonly number[];
+  /** lite (default) or heavy (High accuracy — slower, lazy-loaded). */
+  poseQuality?: PoseModelQuality;
 }
 
 interface SamplePass {
@@ -346,8 +359,13 @@ export async function analyzeMultiClip(
   options: AnalyzeOptions,
 ): Promise<MultiDetection & { samples?: FootSample[] }> {
   const { video, seeker, frameCount, onProgress, signal } = options;
-  onProgress("Loading pose model…");
-  const landmarker = await loadLandmarker();
+  const quality: PoseModelQuality = options.poseQuality === "heavy" ? "heavy" : "lite";
+  onProgress(
+    quality === "heavy"
+      ? "Loading high-accuracy pose model (slower)…"
+      : "Loading pose model…",
+  );
+  const landmarker = await loadLandmarker(quality);
   const prepared = prepareCanvas(video);
   if (!prepared) {
     return {
@@ -357,6 +375,12 @@ export async function analyzeMultiClip(
     };
   }
   const { canvas, context } = prepared;
+
+  const timing: JumpTimingContext = {
+    captureFps: options.captureFps ?? 240,
+    stretch: options.stretch ?? 1,
+    frameTimes: options.frameTimes,
+  };
 
   const step = frameCount <= 800 ? 1 : scanStep(frameCount);
   const coarse = coarseFrames(frameCount, step);
@@ -379,29 +403,29 @@ export async function analyzeMultiClip(
     return {
       ok: false,
       reason:
-        "Pose saw too few body landmarks (dark shoes, busy background, or wrong subject). Mark events by hand.",
+        "No plausible jump found — pose saw too few body landmarks. Mark touchdown, takeoff, and landing by hand.",
       diagnostics: emptyDiagnostics({
         ...scanDiag,
         rejectStage: "no_samples",
-        notes: ["Increase lighting or mark manually."],
+        notes: ["Try High accuracy (slower), better lighting, or mark manually."],
       }),
     };
   }
 
-  let single = detectEvents(coarsePass.samples, undefined, 3, scanDiag);
+  let single = detectEvents(coarsePass.samples, undefined, 3, scanDiag, timing);
   const refineTargets: DetectedEvents[] = [];
   if (single.ok) refineTargets.push(single.events);
-  const multiCoarse = detectAllEvents(coarsePass.samples, { maxJumps: 8 });
+  const multiCoarse = detectAllEvents(coarsePass.samples, { maxJumps: 8, timing });
   if (multiCoarse.ok && multiCoarse.jumps.length >= 2) {
     for (const jump of multiCoarse.jumps) refineTargets.push(jump);
   }
 
   if (refineTargets.length === 0) {
-    // Still try to surface low-confidence single if detectEvents proposed none
-    // but diagnostics have candidates — detectEvents already proposes ≥3.
     return {
       ok: false,
-      reason: single.ok === false ? single.reason : "No jump found. Mark events by hand.",
+      reason: single.ok === false
+        ? single.reason
+        : "No plausible jump found. Mark touchdown, takeoff, and landing by hand.",
       diagnostics: single.diagnostics,
     };
   }
@@ -427,10 +451,11 @@ export async function analyzeMultiClip(
 
   const merged = [...coarsePass.samples, ...finePass.samples];
   const mergedDiag = mergeDiag([coarsePass, finePass]);
-  single = detectEvents(merged, single.ok ? single.model : undefined, 3, mergedDiag);
+  single = detectEvents(merged, single.ok ? single.model : undefined, 3, mergedDiag, timing);
   const multi = detectAllEvents(merged, {
     fixedModel: multiCoarse.ok ? multiCoarse.model : single.ok ? single.model : undefined,
     maxJumps: 8,
+    timing,
   });
 
   const candidatePool = [
@@ -446,11 +471,6 @@ export async function analyzeMultiClip(
     return true;
   });
 
-  const timing: JumpTimingContext = {
-    captureFps: options.captureFps ?? 240,
-    stretch: options.stretch ?? 1,
-    frameTimes: options.frameTimes,
-  };
   const stepOffHint =
     single.ok && single.events.stepOff !== null
       ? single.events.stepOff
@@ -463,11 +483,12 @@ export async function analyzeMultiClip(
     candidates: candidates.sort((a, b) => b.score - a.score),
     notes: [
       ...(single.diagnostics.notes ?? []),
+      `Pose model: ${quality}`,
       ...resolved.notes,
       ...resolved.rejected.slice(0, 4).map((r) => `Rejected TD${r.touchdown}: ${r.rejectReason}`),
     ],
-    lowConfidence: resolved.lowConfidence || resolved.implausible,
-    rejectStage: resolved.jumps.length ? "ok" : single.diagnostics.rejectStage,
+    lowConfidence: resolved.lowConfidence,
+    rejectStage: resolved.jumps.length && !resolved.implausible ? "ok" : single.diagnostics.rejectStage,
   };
 
   const jumpModel: GroundModel | null =
@@ -475,13 +496,17 @@ export async function analyzeMultiClip(
     (multi.ok ? multi.model : null) ??
     groundModel(merged);
 
-  if (!resolved.jumps.length || !jumpModel) {
+  // Never apply physically implausible marks — fall back to manual.
+  if (resolved.implausible || !resolved.jumps.length || !jumpModel) {
     return {
       ok: false,
       reason:
-        (single.ok ? null : single.reason) ??
-        "Auto-detect could not find a physically plausible jump. Mark touchdown, takeoff, and landing by hand.",
-      diagnostics: diagBase,
+        "No plausible jump found (contact 80–1000 ms, flight ≥150 ms). Mark touchdown, takeoff, and landing by hand.",
+      diagnostics: {
+        ...diagBase,
+        lowConfidence: true,
+        notes: [...diagBase.notes, ...resolved.notes],
+      },
     };
   }
 
@@ -489,13 +514,8 @@ export async function analyzeMultiClip(
     ok: true,
     jumps: resolved.jumps,
     model: jumpModel,
-    lowConfidence: resolved.lowConfidence || resolved.implausible,
-    diagnostics: {
-      ...diagBase,
-      notes: resolved.implausible
-        ? [...diagBase.notes, "Result flagged — timings look wrong; adjust marks."]
-        : diagBase.notes,
-    },
+    lowConfidence: resolved.lowConfidence,
+    diagnostics: diagBase,
   };
 }
 

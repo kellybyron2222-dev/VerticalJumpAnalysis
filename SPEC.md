@@ -79,6 +79,12 @@ Out of scope for this milestone: pose detection, baselines, flags, Excel export,
 
 Detect touchdown, takeoff, and landing in the browser with a pose model (MediaPipe Pose or MoveNet). The user can still correct each event by hand, frame by frame. Accuracy and repeatability matter most. A wrong automatic mark that is easy to correct is acceptable; a mark that drifts between identical runs is not.
 
+Auto-detect (on-device only; video never uploads):
+
+- Default MediaPipe Pose Landmarker **lite** model. Optional **High accuracy** toggle lazy-loads the **heavy** model and re-scans; the UI must say it is slower.
+- Floor-contact candidates are cross-checked with a **foot-speed** foot-strike detector: smooth ankle/heel/toe vertical position, vertical velocity in real time (after slow-mo stretch correction), touchdown when downward speed drops to ~0 and the foot stays still, takeoff when upward speed first exceeds a threshold after contact, landing at the next downward speed stop. Prefer cycles consistent with both paths.
+- Keep real-time plausibility gates: contact 80–1000 ms, flight ≥150 ms. If no plausible jump is found, say so and fall back to manual frame marking — never apply nonsense marks.
+
 ### Milestone 3 — Metrics, sessions, and box profile
 
 Done when all of the following work:

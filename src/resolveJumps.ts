@@ -268,9 +268,9 @@ export function resolveJumpSet(
     timing,
   );
   if (!check.ok) {
-    notes.push(`Merged jump still implausible (${check.reason}). Adjust marks.`);
+    notes.push(`Merged jump still implausible (${check.reason}). Fall back to manual marks.`);
     return {
-      jumps: [merged],
+      jumps: [],
       valid,
       rejected,
       lowConfidence: true,

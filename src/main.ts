@@ -171,6 +171,7 @@ const chartMetric = must<HTMLSelectElement>("#chart-metric");
 const chartJumpType = must<HTMLSelectElement>("#chart-jump-type");
 const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
+const highAccuracy = must<HTMLInputElement>("#high-accuracy");
 const detectStatus = must<HTMLElement>("#detect-status");
 const detectDiagEl = must<HTMLElement>("#detect-diag");
 const slowInput = must<HTMLInputElement>("#slowmo");
@@ -1083,6 +1084,7 @@ async function runDetection(): Promise<void> {
       captureFps: fps,
       stretch,
       frameTimes: frameTimes ?? undefined,
+      poseQuality: highAccuracy.checked ? "heavy" : "lite",
       onProgress: (message) => {
         detectStatus.textContent = message;
       },
@@ -1093,7 +1095,9 @@ async function runDetection(): Promise<void> {
     }
     showDetectDiagnostics(result.diagnostics);
     if (!result.ok) {
-      detectStatus.textContent = `Auto-detect failed: ${result.reason}`;
+      detectStatus.textContent = result.reason.startsWith("No plausible")
+        ? result.reason
+        : `No plausible jump found. ${result.reason}`;
       multiJumpPanel.hidden = true;
       return;
     }

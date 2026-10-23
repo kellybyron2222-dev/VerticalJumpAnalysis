@@ -5,6 +5,7 @@ import {
   type DetectCandidate,
   type DetectDiagnostics,
 } from "./detectDiag.ts";
+import { realSecondsOnClock } from "./metrics.ts";
 
 /**
  * One pose sample. `footY` is the contact signal in normalized image
@@ -18,6 +19,13 @@ export interface FootSample {
   upperFootY?: number;
   /** Mid-hip Y when available (larger = lower in frame). */
   hipY?: number;
+}
+
+/** Timing for real-time foot velocity (presentation clock ÷ stretch). */
+export interface FootSpeedTiming {
+  captureFps: number;
+  stretch: number;
+  frameTimes?: readonly number[];
 }
 
 export interface GroundModel {
@@ -50,6 +58,15 @@ export type Detection =
 const MIN_SAMPLES = 5;
 /** Loose default so short GCT / coarse scans still find takeoff. */
 const DEFAULT_MIN_AIR = 3;
+
+/** Foot Y units per real second — near-zero after a strike. */
+const FOOT_STILL_V = 0.28;
+/** Upward (negative dy/dt) threshold to mark takeoff. */
+const FOOT_TAKEOFF_V = 0.45;
+/** Prior downward peak to trust a stop as touchdown/landing. */
+const FOOT_DOWN_PEAK_V = 0.35;
+const FOOT_STILL_HOLD_S = 0.035;
+const FOOT_SMOOTH = 5;
 
 function sortedSamples(samples: readonly FootSample[]): FootSample[] {
   const byFrame = new Map<number, FootSample>();
@@ -187,10 +204,221 @@ function scoreCandidate(
   };
 }
 
+/** Moving-average smooth of footY (image Y; larger = lower in frame). */
+export function smoothFootY(values: readonly number[], window = FOOT_SMOOTH): number[] {
+  const half = Math.max(1, Math.floor(window / 2));
+  return values.map((_, i) => {
+    let sum = 0;
+    let n = 0;
+    for (let k = i - half; k <= i + half; k += 1) {
+      if (k < 0 || k >= values.length) continue;
+      sum += values[k]!;
+      n += 1;
+    }
+    return n ? sum / n : values[i]!;
+  });
+}
+
+/**
+ * Vertical foot velocity in footY units per *real* second (after stretch).
+ * Positive = moving down the image (toward the floor).
+ */
+export function footVerticalVelocity(
+  ordered: readonly FootSample[],
+  timing: FootSpeedTiming,
+): number[] {
+  const ys = smoothFootY(ordered.map((s) => s.footY));
+  const vel = new Array<number>(ordered.length).fill(0);
+  for (let i = 1; i < ordered.length; i += 1) {
+    const dt = realSecondsOnClock(
+      timing.frameTimes,
+      ordered[i - 1]!.frame,
+      ordered[i]!.frame,
+      timing.captureFps,
+      timing.stretch,
+    );
+    if (!(dt > 1e-6)) {
+      vel[i] = vel[i - 1] ?? 0;
+      continue;
+    }
+    vel[i] = (ys[i]! - ys[i - 1]!) / dt;
+  }
+  if (vel.length) vel[0] = vel[1] ?? 0;
+  return smoothFootY(vel, 3);
+}
+
+function indexStillAfterDown(
+  vel: readonly number[],
+  ordered: readonly FootSample[],
+  timing: FootSpeedTiming,
+  from: number,
+): number | null {
+  let peakDown = 0;
+  for (let i = from; i < vel.length; i += 1) {
+    const v = vel[i]!;
+    if (v > peakDown) peakDown = v;
+    if (peakDown < FOOT_DOWN_PEAK_V) continue;
+    if (Math.abs(v) > FOOT_STILL_V) continue;
+    // Hold still for FOOT_STILL_HOLD_S.
+    let j = i;
+    let held = 0;
+    while (j + 1 < vel.length && Math.abs(vel[j + 1]!) <= FOOT_STILL_V * 1.35) {
+      held += realSecondsOnClock(
+        timing.frameTimes,
+        ordered[j]!.frame,
+        ordered[j + 1]!.frame,
+        timing.captureFps,
+        timing.stretch,
+      );
+      j += 1;
+      if (held >= FOOT_STILL_HOLD_S) return i;
+    }
+  }
+  return null;
+}
+
+function indexTakeoffUp(vel: readonly number[], from: number): number | null {
+  for (let i = from + 1; i < vel.length; i += 1) {
+    if (vel[i]! <= -FOOT_TAKEOFF_V) return i;
+  }
+  return null;
+}
+
+/** Reject walk→box plateaus: real flight is mostly moving, not standing still mid-air. */
+function flightMostlyMoving(
+  vel: readonly number[],
+  toIndex: number,
+  ldIndex: number,
+): boolean {
+  let still = 0;
+  let n = 0;
+  for (let i = toIndex + 1; i < ldIndex; i += 1) {
+    n += 1;
+    if (Math.abs(vel[i]!) < FOOT_STILL_V) still += 1;
+  }
+  if (n < 3) return false;
+  return still / n < 0.42;
+}
+
+/**
+ * Foot-speed foot-strike detector: touchdown = downward speed → ~0 after
+ * step-off (or mid-drop); takeoff = first upward burst; landing = next stop.
+ */
+export function detectFootSpeedCycles(
+  samples: readonly FootSample[],
+  timing: FootSpeedTiming,
+  options: { maxJumps?: number; model?: GroundModel | null } = {},
+): DetectCandidate[] {
+  const maxJumps = options.maxJumps ?? 8;
+  const ordered = sortedSamples(samples);
+  if (ordered.length < MIN_SAMPLES) return [];
+  const vel = footVerticalVelocity(ordered, timing);
+  const model = options.model ?? groundModel(ordered);
+  const out: DetectCandidate[] = [];
+  let search = 0;
+
+  while (out.length < maxJumps && search < ordered.length - 3) {
+    const tdIndex = indexStillAfterDown(vel, ordered, timing, search);
+    if (tdIndex === null) break;
+    const toIndex = indexTakeoffUp(vel, tdIndex);
+    if (toIndex === null) break;
+    const ldIndex = indexStillAfterDown(vel, ordered, timing, toIndex);
+    if (ldIndex === null || ldIndex <= toIndex) {
+      search = tdIndex + 1;
+      continue;
+    }
+    if (!flightMostlyMoving(vel, toIndex, ldIndex)) {
+      // Likely standing on the box after a step — skip this takeoff, keep searching.
+      search = toIndex + 1;
+      continue;
+    }
+
+    const touchdown = ordered[tdIndex]!.frame;
+    const takeoff = ordered[toIndex]!.frame;
+    const landing = ordered[ldIndex]!.frame;
+    const scored = scoreJumpCycle(touchdown, takeoff, landing);
+    if (scored.score < 3) {
+      search = tdIndex + 1;
+      continue;
+    }
+    out.push({
+      stepOff: model ? findStepOffInRange(ordered, tdIndex, search, model.ground) : null,
+      touchdown,
+      takeoff,
+      landing,
+      score: scored.score + 6,
+      note: `${scored.note}; foot-speed`,
+    });
+    search = ldIndex + 1;
+  }
+  return out;
+}
+
+/** Prefer cycles that floor-contact and foot-speed both see (within ±tol frames). */
+export function mergeDetectionCandidates(
+  floor: readonly DetectCandidate[],
+  speed: readonly DetectCandidate[],
+  frameTol = 12,
+): DetectCandidate[] {
+  const merged: DetectCandidate[] = [];
+  const usedSpeed = new Set<number>();
+  const strongFloor = floor.filter((f) => f.score >= 10);
+
+  for (const f of floor) {
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < speed.length; i += 1) {
+      if (usedSpeed.has(i)) continue;
+      const s = speed[i]!;
+      const dist =
+        Math.abs(s.touchdown - f.touchdown) +
+        Math.abs(s.takeoff - f.takeoff) +
+        Math.abs(s.landing - f.landing);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    if (bestIdx >= 0 && bestDist <= frameTol * 3) {
+      usedSpeed.add(bestIdx);
+      // Keep floor marks (repeatable); boost score when foot-speed agrees.
+      merged.push({
+        ...f,
+        score: f.score + 10,
+        note: `${f.note ?? "ok"}; agreed with foot-speed`,
+      });
+    } else {
+      merged.push(f);
+    }
+  }
+
+  // Speed-only fallback when floor is weak, or for clearly later separated cycles.
+  const hasStrongFloor = strongFloor.length > 0;
+  for (let i = 0; i < speed.length; i += 1) {
+    if (usedSpeed.has(i)) continue;
+    const s = speed[i]!;
+    if (hasStrongFloor) {
+      const overlapsStrong = strongFloor.some(
+        (f) => s.touchdown <= f.landing + frameTol && f.touchdown <= s.landing + frameTol,
+      );
+      const beforeAllStrong = strongFloor.every((f) => s.landing < f.touchdown - frameTol);
+      // Skip early false strikes (walking) when a confident floor jump exists.
+      if (overlapsStrong || beforeAllStrong) continue;
+    }
+    merged.push(s);
+  }
+  return merged;
+}
+
 /** Enumerate TD/TO/LD cycles, including rebound-centric search after walking lead-ins. */
 export function enumerateJumpCycles(
   samples: readonly FootSample[],
-  options: { fixedModel?: GroundModel; minAirFrames?: number; maxJumps?: number } = {},
+  options: {
+    fixedModel?: GroundModel;
+    minAirFrames?: number;
+    maxJumps?: number;
+    timing?: FootSpeedTiming;
+  } = {},
 ): { model: GroundModel | null; candidates: DetectCandidate[]; ordered: FootSample[] } {
   const minAirFrames = options.minAirFrames ?? DEFAULT_MIN_AIR;
   const maxJumps = options.maxJumps ?? 12;
@@ -249,7 +477,10 @@ export function enumerateJumpCycles(
     pushUnique(scoreCandidate(ordered, model, tdIndex, toIndex, ldIndex, 0));
   }
 
-  return { model, candidates, ordered };
+  const timing = options.timing ?? { captureFps: 240, stretch: 1 };
+  const speed = detectFootSpeedCycles(ordered, timing, { maxJumps, model });
+  const merged = mergeDetectionCandidates(candidates, speed);
+  return { model, candidates: merged, ordered };
 }
 
 /**
@@ -262,6 +493,7 @@ export function detectEvents(
   fixedModel?: GroundModel,
   minAirFrames = DEFAULT_MIN_AIR,
   baseDiag?: Partial<DetectDiagnostics>,
+  timing?: FootSpeedTiming,
 ): Detection {
   const hips = hipRange(sortedSamples(samples));
   const base = emptyDiagnostics({
@@ -271,12 +503,16 @@ export function detectEvents(
     framesWithPerson: baseDiag?.framesWithPerson ?? sortedSamples(samples).length,
   });
 
-  const { model, candidates, ordered } = enumerateJumpCycles(samples, { fixedModel, minAirFrames });
+  const { model, candidates, ordered } = enumerateJumpCycles(samples, {
+    fixedModel,
+    minAirFrames,
+    timing,
+  });
   if (!model) {
     return {
       ok: false,
       reason:
-        "Not enough pose samples with a visible body. Try again, or mark touchdown, takeoff, and landing by hand.",
+        "No plausible jump found. Mark touchdown, takeoff, and landing by hand.",
       diagnostics: { ...base, rejectStage: "no_samples", candidates: [] },
     };
   }
@@ -295,8 +531,8 @@ export function detectEvents(
     return {
       ok: false,
       reason: anyLeave
-        ? "Saw motion but no rebound (touchdown → takeoff → landing). Mark events by hand."
-        : "Could not see the feet leave the floor (no drop). Mark events by hand.",
+        ? "No plausible jump found (motion without a clear rebound). Mark events by hand."
+        : "No plausible jump found (feet never clearly left the floor). Mark events by hand.",
       diagnostics: {
         ...diag,
         rejectStage: anyLeave ? "no_rebound" : "no_drop",
@@ -335,7 +571,7 @@ export function detectEvents(
 
   return {
     ok: false,
-    reason: `Best candidate rejected (${scored.note}). Mark touchdown, takeoff, and landing by hand.`,
+    reason: `No plausible jump found (${scored.note}). Mark touchdown, takeoff, and landing by hand.`,
     diagnostics: { ...diag, rejectStage: scored.stage, lowConfidence: true },
   };
 }
@@ -360,6 +596,7 @@ export function detectAllEvents(
     minAirFrames?: number;
     minStandFrames?: number;
     maxJumps?: number;
+    timing?: FootSpeedTiming;
   } = {},
 ): MultiDetection {
   const minAirFrames = options.minAirFrames ?? DEFAULT_MIN_AIR;
@@ -376,19 +613,18 @@ export function detectAllEvents(
   if (!model) {
     return {
       ok: false,
-      reason: "Not enough pose samples with a visible body. Mark events by hand.",
+      reason: "No plausible jump found. Mark events by hand.",
       diagnostics: { ...base, rejectStage: "no_samples" },
     };
   }
 
   const onGround = buildOnGround(ordered, model);
   const { nextContact, nextAir } = contactHelpers(ordered, onGround, minAirFrames);
-  const jumps: DetectedEvents[] = [];
-  const candidates: DetectCandidate[] = [];
+  const floorCandidates: DetectCandidate[] = [];
   let i = 0;
   let searchFrom = 0;
 
-  while (jumps.length < maxJumps && i < ordered.length) {
+  while (floorCandidates.length < maxJumps && i < ordered.length) {
     while (i < ordered.length && onGround[i]) i += 1;
     if (i >= ordered.length) break;
 
@@ -411,8 +647,7 @@ export function detectAllEvents(
       score: scored.score,
       note: scored.note,
     };
-    candidates.push(cand);
-    if (scored.score >= 10) jumps.push(eventsFromCandidate(cand));
+    floorCandidates.push(cand);
 
     let stand = 0;
     let j = ldIndex;
@@ -426,6 +661,17 @@ export function detectAllEvents(
       continue;
     }
     i = ldIndex;
+  }
+
+  const timing = options.timing ?? { captureFps: 240, stretch: 1 };
+  const speed = detectFootSpeedCycles(ordered, timing, { maxJumps, model });
+  const candidates = mergeDetectionCandidates(floorCandidates, speed);
+  const jumps: DetectedEvents[] = [];
+  for (const cand of candidates) {
+    if (jumps.length >= maxJumps) break;
+    if (scoreJumpCycle(cand.touchdown, cand.takeoff, cand.landing).score >= 10) {
+      jumps.push(eventsFromCandidate(cand));
+    }
   }
 
   const diag: DetectDiagnostics = {
@@ -452,7 +698,7 @@ export function detectAllEvents(
     }
     return {
       ok: false,
-      reason: "No jump cycle found. Mark touchdown, takeoff, and landing by hand.",
+      reason: "No plausible jump found. Mark touchdown, takeoff, and landing by hand.",
       diagnostics: { ...diag, rejectStage: "no_rebound" },
     };
   }
