@@ -1,9 +1,26 @@
 import type { FootSample } from "./detect.ts";
 
-/** Shared overlay chrome — used by on-screen canvas, PNG card, and video export. */
-export const OVERLAY_LINE = "#3a3a3a";
-export const OVERLAY_TEXT = "#1a2a6c";
-export const OVERLAY_TEXT_BACK = "rgba(255, 255, 255, 0.78)";
+/**
+ * High-contrast overlay palette (readable on dark and light video).
+ * Shared by on-screen canvas, PNG card, and video export.
+ */
+export const OVERLAY = {
+  heelDot: "#ff2d95",
+  heelDotOutline: "#ffffff",
+  trail: "#00e5ff",
+  trailOutline: "#0a0a0a",
+  trailOpacityMax: 0.4,
+  trailOpacityMin: 0.12,
+  apex: "#c8ff00",
+  apexOutline: "#111111",
+  labelText: "#c8ff00",
+  labelBack: "rgba(10, 10, 10, 0.78)",
+} as const;
+
+/** @deprecated kept for tests that check palette left yellow/gray era */
+export const OVERLAY_LINE = OVERLAY.trailOutline;
+export const OVERLAY_TEXT = OVERLAY.labelText;
+export const OVERLAY_TEXT_BACK = OVERLAY.labelBack;
 
 export interface FootPoint {
   frame: number;
@@ -20,10 +37,11 @@ export interface JumpOverlayMetrics {
 }
 
 export interface JumpOverlayModel {
-  path: FootPoint[];
+  /** Heel path takeoff→landing (trail source). */
+  heelPath: FootPoint[];
   /** Frame of the heel peak during flight — used for card/export seek. */
   apexFrame: number;
-  /** Heel at peak (dot + top of vertical line). */
+  /** Heel at peak (top of vertical line). */
   heelApex: FootPoint;
   /** Floor Y just before takeoff (bottom of vertical line / tick). */
   floorY: number;
@@ -33,25 +51,16 @@ export interface JumpOverlayModel {
   heightIn: number;
 }
 
-/** Points from takeoff→landing with usable XY, sorted by frame. */
+/** @deprecated alias — older tests/path helpers; heel path is preferred. */
 export function footPathDuringFlight(
   samples: readonly FootSample[],
   takeoff: number,
   landing: number,
 ): FootPoint[] {
-  if (!(takeoff < landing)) return [];
-  const byFrame = new Map<number, FootPoint>();
-  for (const sample of samples) {
-    if (sample.frame < takeoff || sample.frame > landing) continue;
-    if (!Number.isFinite(sample.footY)) continue;
-    const x = sample.footX;
-    if (x === undefined || !Number.isFinite(x)) continue;
-    byFrame.set(sample.frame, { frame: sample.frame, x, y: sample.footY });
-  }
-  return [...byFrame.values()].sort((a, b) => a.frame - b.frame);
+  return heelPathDuringFlight(samples, takeoff, landing);
 }
 
-/** Apex = highest in air = smallest footY during flight (image Y grows downward). */
+/** Apex = highest in air = smallest Y during flight (image Y grows downward). */
 export function findFlightApex(path: readonly FootPoint[]): FootPoint | null {
   if (!path.length) return null;
   let best = path[0]!;
@@ -104,15 +113,34 @@ export function floorLevelNearTakeoff(
   return best;
 }
 
+/** Heel path points at or before `throughFrame` (inclusive). */
+export function heelTrailThrough(
+  heelPath: readonly FootPoint[],
+  throughFrame: number,
+): FootPoint[] {
+  return heelPath.filter((p) => p.frame <= throughFrame);
+}
+
+/** Nearest heel sample at or before `frame`; else first point. */
+export function heelAtFrame(
+  heelPath: readonly FootPoint[],
+  frame: number,
+): FootPoint | null {
+  if (!heelPath.length) return null;
+  let best: FootPoint | null = null;
+  for (const point of heelPath) {
+    if (point.frame > frame) break;
+    best = point;
+  }
+  return best ?? heelPath[0]!;
+}
+
 export function buildJumpOverlayModel(
   samples: readonly FootSample[],
   takeoff: number,
   landing: number,
   heightIn: number,
 ): JumpOverlayModel | null {
-  const path = footPathDuringFlight(samples, takeoff, landing);
-  if (!path.length) return null;
-
   const heelPath = heelPathDuringFlight(samples, takeoff, landing);
   const heelApex = findFlightApex(heelPath);
   if (!heelApex) return null;
@@ -121,7 +149,7 @@ export function buildJumpOverlayModel(
   if (floorY === null) return null;
 
   return {
-    path,
+    heelPath,
     apexFrame: heelApex.frame,
     heelApex,
     floorY,
@@ -131,9 +159,103 @@ export function buildJumpOverlayModel(
   };
 }
 
+function strokeTrailSegment(
+  ctx: CanvasRenderingContext2D,
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  width: number,
+  opacity: number,
+): void {
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  // Dark outline for contrast on light backgrounds
+  ctx.globalAlpha = Math.min(1, opacity + 0.25);
+  ctx.strokeStyle = OVERLAY.trailOutline;
+  ctx.lineWidth = width + 2;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  // Cyan trail
+  ctx.globalAlpha = opacity;
+  ctx.strokeStyle = OVERLAY.trail;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawApexHeight(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  model: JumpOverlayModel,
+): void {
+  const heel = {
+    x: model.heelApex.x * width,
+    y: model.heelApex.y * height,
+  };
+  const floorY = model.floorY * height;
+  const x = heel.x;
+  const lineWidth = Math.max(3, width * 0.008);
+  const tick = Math.max(12, width * 0.032);
+
+  ctx.save();
+  ctx.lineCap = "round";
+  // Dark outline
+  ctx.strokeStyle = OVERLAY.apexOutline;
+  ctx.lineWidth = lineWidth + 2.5;
+  ctx.beginPath();
+  ctx.moveTo(x, floorY);
+  ctx.lineTo(x, heel.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - tick, floorY);
+  ctx.lineTo(x + tick, floorY);
+  ctx.stroke();
+  // Bright lime
+  ctx.strokeStyle = OVERLAY.apex;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  ctx.moveTo(x, floorY);
+  ctx.lineTo(x, heel.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - tick, floorY);
+  ctx.lineTo(x + tick, floorY);
+  ctx.stroke();
+
+  const tag = `${model.heightIn.toFixed(1)} in`;
+  const fontPx = Math.max(15, Math.round(width * 0.048));
+  ctx.font = `700 ${fontPx}px "Barlow Condensed", "Arial Narrow", sans-serif`;
+  const padX = 8;
+  const metrics = ctx.measureText(tag);
+  const boxW = metrics.width + padX * 2;
+  const boxH = Math.max(24, width * 0.058);
+  let boxX = x + tick + 6;
+  let boxY = (floorY + heel.y) / 2 - boxH / 2;
+  if (boxX + boxW > width - 4) boxX = x - tick - 6 - boxW;
+  boxX = Math.max(4, Math.min(width - boxW - 4, boxX));
+  boxY = Math.max(4, Math.min(height - boxH - 4, boxY));
+  ctx.fillStyle = OVERLAY.labelBack;
+  ctx.fillRect(boxX, boxY, boxW, boxH);
+  ctx.strokeStyle = OVERLAY.apexOutline;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(boxX, boxY, boxW, boxH);
+  ctx.fillStyle = OVERLAY.labelText;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  ctx.fillText(tag, boxX + padX, boxY + boxH / 2);
+  ctx.restore();
+}
+
 /**
- * Foot path + one vertical heel-height line (floor tick → heel apex) with
- * official flight-time label. Shared by on-screen, PNG card, and video export.
+ * Moving heel dot + growing faint trail; apex floor→heel line + height label
+ * when at/after apex (or always when currentFrame is null — jump card).
+ * Shared by on-screen, PNG card, and video export.
  */
 export function drawFootOverlay(
   ctx: CanvasRenderingContext2D,
@@ -142,90 +264,43 @@ export function drawFootOverlay(
   model: JumpOverlayModel,
   options: { showTags?: boolean; currentFrame?: number | null } = {},
 ): void {
-  const showTags = options.showTags !== false;
+  void options.showTags;
   const px = (p: FootPoint) => ({ x: p.x * width, y: p.y * height });
-  const pathWidth = Math.max(1.9, width * 0.006);
-  const lineWidth = Math.max(2.5, width * 0.007);
-  const pointR = Math.max(3.5, width * 0.009);
-  const heelR = Math.max(5, width * 0.012);
+  const fullTrail = options.currentFrame == null;
+  const through = fullTrail ? model.landing : options.currentFrame!;
+  const trail = heelTrailThrough(model.heelPath, through);
+  const trailWidth = Math.max(1.25, width * 0.0035);
 
-  if (model.path.length >= 2) {
-    ctx.save();
-    ctx.strokeStyle = OVERLAY_LINE;
-    ctx.lineWidth = pathWidth;
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    const first = px(model.path[0]!);
-    ctx.moveTo(first.x, first.y);
-    for (let i = 1; i < model.path.length; i += 1) {
-      const p = px(model.path[i]!);
-      ctx.lineTo(p.x, p.y);
+  if (trail.length >= 2) {
+    const n = trail.length - 1;
+    for (let i = 0; i < n; i += 1) {
+      const t = n === 1 ? 1 : i / (n - 1);
+      const opacity =
+        OVERLAY.trailOpacityMin + (OVERLAY.trailOpacityMax - OVERLAY.trailOpacityMin) * t;
+      strokeTrailSegment(ctx, px(trail[i]!), px(trail[i + 1]!), trailWidth, opacity);
     }
-    ctx.stroke();
+  }
+
+  const showApex = fullTrail || (options.currentFrame !== null && options.currentFrame! >= model.apexFrame);
+  if (showApex) {
+    drawApexHeight(ctx, width, height, model);
+  }
+
+  const heelNow = fullTrail ? model.heelApex : heelAtFrame(model.heelPath, through);
+  if (heelNow) {
+    const p = px(heelNow);
+    const r = Math.max(6, width * 0.014);
+    ctx.save();
+    ctx.beginPath();
+    ctx.fillStyle = OVERLAY.heelDotOutline;
+    ctx.arc(p.x, p.y, r + 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.fillStyle = OVERLAY.heelDot;
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
-
-  if (showTags) {
-    for (const point of model.path) {
-      const p = px(point);
-      ctx.beginPath();
-      ctx.fillStyle = OVERLAY_LINE;
-      ctx.arc(p.x, p.y, pointR, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  const heel = px(model.heelApex);
-  const floorY = model.floorY * height;
-  const x = heel.x;
-
-  ctx.save();
-  ctx.strokeStyle = OVERLAY_LINE;
-  ctx.fillStyle = OVERLAY_LINE;
-  ctx.lineWidth = lineWidth;
-  ctx.lineCap = "round";
-
-  // Vertical line: floor → heel peak
-  ctx.beginPath();
-  ctx.moveTo(x, floorY);
-  ctx.lineTo(x, heel.y);
-  ctx.stroke();
-
-  // Short horizontal floor tick
-  const tick = Math.max(10, width * 0.028);
-  ctx.beginPath();
-  ctx.moveTo(x - tick, floorY);
-  ctx.lineTo(x + tick, floorY);
-  ctx.stroke();
-
-  // Heel apex dot
-  ctx.beginPath();
-  ctx.arc(heel.x, heel.y, heelR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Official flight-time height next to the line
-  const tag = `${model.heightIn.toFixed(1)} in`;
-  const fontPx = Math.max(14, Math.round(width * 0.045));
-  ctx.font = `600 ${fontPx}px "Barlow Condensed", "Arial Narrow", sans-serif`;
-  const padX = 8;
-  const metrics = ctx.measureText(tag);
-  const boxW = metrics.width + padX * 2;
-  const boxH = Math.max(22, width * 0.055);
-  let boxX = x + tick + 6;
-  let boxY = (floorY + heel.y) / 2 - boxH / 2;
-  if (boxX + boxW > width - 4) boxX = x - tick - 6 - boxW;
-  boxX = Math.max(4, Math.min(width - boxW - 4, boxX));
-  boxY = Math.max(4, Math.min(height - boxH - 4, boxY));
-  ctx.fillStyle = OVERLAY_TEXT_BACK;
-  ctx.fillRect(boxX, boxY, boxW, boxH);
-  ctx.fillStyle = OVERLAY_TEXT;
-  ctx.textBaseline = "middle";
-  ctx.textAlign = "left";
-  ctx.fillText(tag, boxX + padX, boxY + boxH / 2);
-  ctx.restore();
-
-  void options.currentFrame;
 }
 
 /** Draw Jump height / Contact time / RSI strip (used by card + video end). */
@@ -273,7 +348,7 @@ export function drawMetricsStrip(
 
 /**
  * Compose export card: video frame + overlays on top, metrics table below.
- * Returns a PNG blob.
+ * Full trail + apex annotation (currentFrame omitted).
  */
 export function composeJumpCardPng(
   videoFrame: CanvasImageSource,
@@ -292,7 +367,7 @@ export function composeJumpCardPng(
   ctx.fillStyle = "#1c1914";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(videoFrame, 0, 0, frameW, frameH);
-  drawFootOverlay(ctx, frameW, frameH, model, { showTags: true });
+  drawFootOverlay(ctx, frameW, frameH, model, { currentFrame: null });
   drawMetricsStrip(ctx, 0, frameH, frameW, tableH, metrics);
 
   const dataUrl = canvas.toDataURL("image/png");

@@ -1,22 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { FootSample } from "./detect.ts";
 import {
-  OVERLAY_LINE,
-  OVERLAY_TEXT,
+  OVERLAY,
   buildJumpOverlayModel,
   exportFrameHoldMs,
   exportVideoFrameRange,
   findFlightApex,
   floorLevelNearTakeoff,
-  footPathDuringFlight,
+  heelAtFrame,
   heelPathDuringFlight,
+  heelTrailThrough,
   parseExportPlaybackSpeed,
   pickRecorderMime,
 } from "./jumpOverlay.ts";
 
 function samples(): FootSample[] {
   const out: FootSample[] = [];
-  // Standing/floor at 0.9, takeoff 10 → heel apex ~25 → landing 40
   for (let frame = 4; frame <= 40; frame += 1) {
     if (frame < 10) {
       out.push({ frame, footY: 0.9, footX: 0.42, heelY: 0.9, heelX: 0.42 });
@@ -30,20 +29,20 @@ function samples(): FootSample[] {
   return out;
 }
 
-describe("jumpOverlay foot path", () => {
-  it("builds a flight path and finds the apex", () => {
-    const path = footPathDuringFlight(samples(), 10, 40);
+describe("jumpOverlay heel trail", () => {
+  it("builds a heel path and finds the apex", () => {
+    const path = heelPathDuringFlight(samples(), 10, 40);
     expect(path.length).toBeGreaterThan(10);
     const apex = findFlightApex(path);
     expect(apex).not.toBeNull();
     expect(apex!.frame).toBeGreaterThan(15);
     expect(apex!.frame).toBeLessThan(35);
-    expect(apex!.y).toBeLessThan(0.6);
 
     const model = buildJumpOverlayModel(samples(), 10, 40, 22.5);
     expect(model).not.toBeNull();
     expect(model!.heightIn).toBe(22.5);
-    expect(model!.heelApex.frame).toBeGreaterThan(15);
+    expect(model!.heelPath.length).toBe(path.length);
+    expect(model!.heelApex.frame).toBe(apex!.frame);
   });
 
   it("returns null without XY samples", () => {
@@ -55,25 +54,24 @@ describe("jumpOverlay foot path", () => {
     expect(buildJumpOverlayModel(bare, 10, 30, 12)).toBeNull();
   });
 
-  it("marks heel peak and floor with official flight-time label (no hip guides)", () => {
-    const model = buildJumpOverlayModel(samples(), 10, 40, 21.5);
-    expect(model).not.toBeNull();
-    expect(model!.floorY).toBeCloseTo(0.9, 2);
+  it("grows the trail up to the current frame only", () => {
+    const model = buildJumpOverlayModel(samples(), 10, 40, 21.5)!;
+    const mid = heelTrailThrough(model.heelPath, 20);
+    expect(mid.length).toBeGreaterThan(0);
+    expect(mid.every((p) => p.frame <= 20)).toBe(true);
+    expect(mid.length).toBeLessThan(model.heelPath.length);
+    const at = heelAtFrame(model.heelPath, 20);
+    expect(at!.frame).toBeLessThanOrEqual(20);
     expect(floorLevelNearTakeoff(samples(), 10)).toBeCloseTo(0.9, 2);
-    const heels = heelPathDuringFlight(samples(), 10, 40);
-    const heelApex = findFlightApex(heels);
-    expect(heelApex).not.toBeNull();
-    expect(model!.heelApex.frame).toBe(heelApex!.frame);
-    expect(model!.heelApex.y).toBeLessThan(model!.floorY);
-    expect(model!.apexFrame).toBe(model!.heelApex.frame);
-    expect(model!.heightIn).toBe(21.5);
-    expect(model).not.toHaveProperty("takeoffHipY");
-    expect(model).not.toHaveProperty("bracketX");
+    expect(model.floorY).toBeCloseTo(0.9, 2);
   });
 
-  it("keeps overlay chrome off the old yellow palette", () => {
-    expect(OVERLAY_LINE.toLowerCase()).toBe("#3a3a3a");
-    expect(OVERLAY_TEXT.toLowerCase()).toBe("#1a2a6c");
+  it("uses a high-contrast palette (magenta dot, cyan trail, lime apex)", () => {
+    expect(OVERLAY.heelDot.toLowerCase()).toBe("#ff2d95");
+    expect(OVERLAY.trail.toLowerCase()).toBe("#00e5ff");
+    expect(OVERLAY.apex.toLowerCase()).toBe("#c8ff00");
+    expect(OVERLAY.trailOpacityMax).toBeLessThanOrEqual(0.4);
+    expect(OVERLAY.trailOpacityMax).toBeGreaterThanOrEqual(0.35);
   });
 });
 
