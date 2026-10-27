@@ -266,6 +266,32 @@ export function mergeFragmentCandidates(
   return { stepOff, touchdown, takeoff, landing };
 }
 
+/**
+ * Approach (one-step / penultimate): plant = last ground contact before the
+ * biggest valid flight — i.e. the TD/TO/LD of the valid cycle with the longest
+ * real flight. Never invents an earliest-TD merge (that yields 4 ms "contact").
+ */
+export function pickApproachPlant(
+  candidates: readonly DetectCandidate[],
+  timing: JumpTimingContext,
+): DetectedEvents | null {
+  if (!candidates.length) return null;
+  const ranked = candidates.map((c) => {
+    const check = validateCandidateRealTime(c, timing);
+    return { c, check };
+  });
+  const valid = ranked.filter((x) => x.check.ok);
+  const pool = valid.length ? valid : ranked.filter((x) => Number.isFinite(x.check.flightS));
+  if (!pool.length) return null;
+  pool.sort(
+    (a, b) =>
+      (b.check.flightS || 0) - (a.check.flightS || 0) ||
+      b.c.score - a.c.score ||
+      b.c.touchdown - a.c.touchdown,
+  );
+  return toEvents(pool[0]!.c);
+}
+
 /** Prefer a TD whose free-fall from step-off is 0.11–0.45 s real. */
 export function touchdownFromFreeFall(
   stepOff: number,
@@ -333,9 +359,11 @@ export function resolveJumpSet(
   }
 
   const stepOffHint = options.stepOffHint ?? null;
+  const requireDrop = options.requireDrop !== false;
 
   let anchoredTd: number | null = null;
-  if (stepOffHint !== null) {
+  // Free-fall SO→TD anchoring is drop/depth only — never for approach.
+  if (requireDrop && stepOffHint !== null) {
     anchoredTd = touchdownFromFreeFall(stepOffHint, candidates, timing);
     if (anchoredTd !== null) {
       notes.push(`Free-fall anchor SO ${stepOffHint} → TD ${anchoredTd}.`);
@@ -373,7 +401,8 @@ export function resolveJumpSet(
   }
 
   // Auto: quality-filter then keep up to 4 separated reps.
-  const auto = filterAutoReps(valid, timing, { requireDrop: options.requireDrop !== false });
+  // Approach (requireDrop=false) never applies drop/step-off/countermovement filter.
+  const auto = filterAutoReps(valid, timing, { requireDrop });
   rejected.push(...auto.rejected);
   for (const r of auto.rejected) {
     notes.push(`Auto dropped TD${r.touchdown}: ${r.rejectReason}`);
@@ -403,10 +432,14 @@ export function resolveJumpSet(
         warnings,
       };
     }
-    notes.push("Valid cycles overlap or touch — merging to one jump.");
+    notes.push(
+      requireDrop
+        ? "Valid cycles overlap or touch — merging to one jump."
+        : "Valid cycles overlap or touch — picking approach plant (biggest valid flight).",
+    );
   }
 
-  // Single-jump path: prefer best Auto rep; else merge fragments.
+  // Single-jump path: prefer best Auto rep; else merge / approach plant.
   if (reps.length === 1) {
     const jumps = [toEvents(reps[0]!)];
     const warnings = landingCheckWarnings(jumps, timing);
@@ -418,6 +451,48 @@ export function resolveJumpSet(
       notes: [...notes, "Auto kept one rep."],
       implausible: false,
       warnings,
+    };
+  }
+
+  // Approach: never earliest-TD merge — plant = last contact before biggest valid flight.
+  if (!requireDrop) {
+    const plant = pickApproachPlant(reps.length ? reps : valid.length ? valid : candidates, timing);
+    if (!plant) {
+      return {
+        jumps: [],
+        valid,
+        rejected,
+        lowConfidence: true,
+        notes: [...notes, "No approach plant candidate."],
+        implausible: true,
+        warnings: [],
+      };
+    }
+    const check = validateCandidateRealTime({ ...plant, score: 0, note: "approach plant" }, timing);
+    if (!check.ok) {
+      notes.push(`Approach plant still implausible (${check.reason}). Fall back to manual marks.`);
+      return {
+        jumps: [],
+        valid,
+        rejected,
+        lowConfidence: true,
+        notes,
+        implausible: true,
+        warnings: [],
+      };
+    }
+    notes.push(
+      `Approach plant TD${plant.touchdown} TO${plant.takeoff} LD${plant.landing} (biggest valid flight).`,
+    );
+    const jumps = [plant];
+    return {
+      jumps,
+      valid,
+      rejected,
+      lowConfidence: rejected.length > 0 && valid.length === 0,
+      notes,
+      implausible: false,
+      warnings: landingCheckWarnings(jumps, timing),
     };
   }
 

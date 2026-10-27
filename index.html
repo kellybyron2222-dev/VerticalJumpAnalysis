@@ -405,6 +405,28 @@
             <span id="playhead" class="playhead"></span>
           </div>
 
+          <fieldset class="jump-type-picker">
+            <legend>Jump type <span class="detail">(choose before Auto-detect)</span></legend>
+            <div class="segment" role="radiogroup" aria-label="Jump type" id="jump-type-group">
+              <label>
+                <input type="radio" name="jumpType" value="drop" />
+                <span>Drop jump</span>
+              </label>
+              <label>
+                <input type="radio" name="jumpType" value="depth" />
+                <span>Depth jump</span>
+              </label>
+              <label>
+                <input type="radio" name="jumpType" value="oneStep" />
+                <span>One-step</span>
+              </label>
+              <label>
+                <input type="radio" name="jumpType" value="penultimate" />
+                <span>Penultimate / Approach</span>
+              </label>
+            </div>
+          </fieldset>
+
           <div class="auto-detect">
             <button type="button" id="auto-detect" disabled>Auto-detect events</button>
             <button type="button" id="cancel-detect" class="text-button" hidden>Cancel</button>
@@ -509,28 +531,6 @@
 
           <h3 class="section-label">Jump details</h3>
           <form id="jump-form">
-            <fieldset>
-              <legend>Jump type</legend>
-              <div class="segment" role="radiogroup" aria-label="Jump type" id="jump-type-group">
-                <label>
-                  <input type="radio" name="jumpType" value="drop" />
-                  <span>Drop jump</span>
-                </label>
-                <label>
-                  <input type="radio" name="jumpType" value="depth" />
-                  <span>Depth jump</span>
-                </label>
-                <label>
-                  <input type="radio" name="jumpType" value="oneStep" />
-                  <span>One-step</span>
-                </label>
-                <label>
-                  <input type="radio" name="jumpType" value="penultimate" />
-                  <span>Penultimate / Approach</span>
-                </label>
-              </div>
-            </fieldset>
-
             <div id="box-fields">
               <label class="field" for="box-height">
                 Box height (in)

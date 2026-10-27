@@ -21,7 +21,12 @@ import { collectFrameTimes, transportEnabledAfterClockRead } from "./cadence.ts"
 import { parseMovClip } from "./mov.ts";
 import { analyzeMultiClip } from "./pose.ts";
 import type { FootSample } from "./detect.ts";
-import { formatDetectDiagnostics, type DetectDiagnostics } from "./detectDiag.ts";
+import {
+  formatDetectDiagnostics,
+  type DetectCandidate,
+  type DetectDiagnostics,
+} from "./detectDiag.ts";
+import { resolveJumpSet } from "./resolveJumps.ts";
 import {
   buildJumpOverlayModel,
   composeJumpCardPng,
@@ -217,6 +222,15 @@ let exportReady: {
 const emptyVideo = must<HTMLElement>("#empty-video");
 const player = must<HTMLElement>("#player");
 let poseSamples: FootSample[] = [];
+/** Last Auto pose candidates — re-resolve when jump type changes (no full re-pose). */
+let lastDetectCache: {
+  candidates: DetectCandidate[];
+  samples: FootSample[];
+  captureFps: number;
+  stretch: number;
+  frameTimes: number[] | undefined;
+  diagnostics: DetectDiagnostics;
+} | null = null;
 let jumpOverlay: JumpOverlayModel | null = null;
 const clipName = must<HTMLElement>("#clip-name");
 const frameLabel = must<HTMLElement>("#frame-label");
@@ -1184,7 +1198,9 @@ function bindActiveStore(profile: Profile): void {
 }
 
 function applyJumpTypeUi(jumpType: JumpType): void {
-  const radio = jumpForm.querySelector<HTMLInputElement>(`input[name="jumpType"][value="${jumpType}"]`);
+  const radio = document.querySelector<HTMLInputElement>(
+    `#jump-type-group input[name="jumpType"][value="${jumpType}"]`,
+  );
   if (radio) radio.checked = true;
   const approach = isApproachJumpType(jumpType);
   const penultimate = jumpType === "penultimate";
@@ -1206,9 +1222,13 @@ function applyJumpTypeUi(jumpType: JumpType): void {
   saveJumpTypePref(store, jumpType);
 }
 
-for (const input of jumpForm.querySelectorAll<HTMLInputElement>('input[name="jumpType"]')) {
+for (const input of document.querySelectorAll<HTMLInputElement>('#jump-type-group input[name="jumpType"]')) {
   input.addEventListener("change", () => {
-    applyJumpTypeUi(parseJumpType(input.value));
+    const jumpType = parseJumpType(input.value);
+    applyJumpTypeUi(jumpType);
+    if (lastDetectCache && lastDetectCache.candidates.length > 0 && !detecting) {
+      reResolveFromCache(jumpType);
+    }
     render();
   });
 }
@@ -1376,6 +1396,7 @@ function loadFile(file: File): void {
   detectStatus.textContent = "";
   showDetectDiagnostics(null);
   poseSamples = [];
+  lastDetectCache = null;
   jumpOverlay = null;
   overlayTools.hidden = true;
   overlayStatus.textContent = "";
@@ -1574,6 +1595,7 @@ async function runDetection(): Promise<void> {
   setCheckMarksFlag(false);
   setDetectProgress(0, "Starting…");
   poseSamples = [];
+  lastDetectCache = null;
   jumpOverlay = null;
   try {
     const stretch = activeStretch();
@@ -1589,6 +1611,7 @@ async function runDetection(): Promise<void> {
       poseQuality: highAccuracy.checked ? "heavy" : "lite",
       jumpCount: jumpCountChoice,
       requireDrop: !isApproachJumpType(jumpType),
+      jumpTypeLabel: formatJumpType(jumpType),
       onProgress: (message, fraction) => {
         setDetectProgress(fraction ?? detectProgressBar.value, message);
       },
@@ -1597,6 +1620,16 @@ async function runDetection(): Promise<void> {
       detectStatus.textContent = "Auto-detect cancelled.";
       return;
     }
+    const samples = result.samples ?? [];
+    poseSamples = samples;
+    lastDetectCache = {
+      candidates: result.diagnostics.candidates ?? [],
+      samples,
+      captureFps: fps,
+      stretch,
+      frameTimes: frameTimes ?? undefined,
+      diagnostics: result.diagnostics,
+    };
     showDetectDiagnostics(result.diagnostics);
     if (!result.ok) {
       detectStatus.textContent = result.reason.startsWith("No plausible")
@@ -1606,58 +1639,12 @@ async function runDetection(): Promise<void> {
       refreshJumpOverlay();
       return;
     }
-    poseSamples = result.samples ?? [];
-    const jumps = result.jumps.map((events) => ({
-      ...events,
-      stepOff: stepOffForFall(events.stepOff, events.touchdown, frameTimes ?? undefined, stretch),
-    }));
-    const notes = result.diagnostics.notes ?? [];
-    const checkNotes = notes.filter((n) => /check marks|check LD mark/i.test(n));
-    setCheckMarksFlag(checkNotes.length > 0, checkNotes[0] ?? "");
-    const warnSuffix = checkNotes.length ? ` ${checkNotes.join(" ")}` : "";
-    if (jumps.length === 1) {
-      const events = jumps[0]!;
-      marks.stepOff = events.stepOff;
-      marks.touchdown = events.touchdown;
-      marks.takeoff = events.takeoff;
-      marks.landing = events.landing;
-      if (jumpType === "penultimate") {
-        const pen = detectPenultimate(poseSamples, events.touchdown);
-        marks.penTouchdown = pen?.touchdown ?? null;
-        marks.penTakeoff = pen?.takeoff ?? null;
-      } else {
-        marks.penTouchdown = null;
-        marks.penTakeoff = null;
-      }
-      frame = events.touchdown;
-      multiJumpPanel.hidden = true;
-      detectStatus.textContent = (
-        result.lowConfidence || checkNotes.length
-          ? "Marks set — Check marks flagged. Use Go to / Set on each event."
-          : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
-      ) + warnSuffix;
-      if (jumpType === "penultimate" && marks.penTouchdown === null) {
-        detectStatus.textContent += " Penultimate step not found — mark manually if visible.";
-      }
-      refreshJumpOverlay();
-      return;
-    }
-    multiJumpRows = buildMultiJumpRows(jumps, frameTimes ?? undefined, fps, stretch);
-    renderMultiJumpPanel();
-    const first = jumps[0]!;
-    marks.stepOff = first.stepOff;
-    marks.penTouchdown = null;
-    marks.penTakeoff = null;
-    marks.touchdown = first.touchdown;
-    marks.takeoff = first.takeoff;
-    marks.landing = first.landing;
-    frame = first.touchdown;
-    detectStatus.textContent = (
-      result.lowConfidence || checkNotes.length
-        ? `Found ${jumps.length} jumps — Check marks flagged. Review each one.`
-        : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`
-    ) + warnSuffix;
-    refreshJumpOverlay();
+    applyResolvedJumps(result.jumps, jumpType, {
+      lowConfidence: Boolean(result.lowConfidence),
+      notes: result.diagnostics.notes ?? [],
+      fps,
+      stretch,
+    });
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";
     else {
@@ -1675,6 +1662,122 @@ async function runDetection(): Promise<void> {
       }
     }
   }
+}
+
+function applyResolvedJumps(
+  rawJumps: Array<{
+    stepOff: number | null;
+    touchdown: number;
+    takeoff: number;
+    landing: number;
+  }>,
+  jumpType: JumpType,
+  meta: { lowConfidence: boolean; notes: string[]; fps: number; stretch: number },
+): void {
+  const jumps = rawJumps.map((events) => ({
+    ...events,
+    stepOff: stepOffForFall(
+      events.stepOff,
+      events.touchdown,
+      frameTimes ?? undefined,
+      meta.stretch,
+    ),
+  }));
+  const checkNotes = meta.notes.filter((n) => /check marks|check LD mark/i.test(n));
+  setCheckMarksFlag(checkNotes.length > 0, checkNotes[0] ?? "");
+  const warnSuffix = checkNotes.length ? ` ${checkNotes.join(" ")}` : "";
+  if (jumps.length === 1) {
+    const events = jumps[0]!;
+    marks.stepOff = events.stepOff;
+    marks.touchdown = events.touchdown;
+    marks.takeoff = events.takeoff;
+    marks.landing = events.landing;
+    if (jumpType === "penultimate") {
+      const pen = detectPenultimate(poseSamples, events.touchdown);
+      marks.penTouchdown = pen?.touchdown ?? null;
+      marks.penTakeoff = pen?.takeoff ?? null;
+    } else {
+      marks.penTouchdown = null;
+      marks.penTakeoff = null;
+    }
+    frame = events.touchdown;
+    multiJumpPanel.hidden = true;
+    detectStatus.textContent = (
+      meta.lowConfidence || checkNotes.length
+        ? "Marks set — Check marks flagged. Use Go to / Set on each event."
+        : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
+    ) + warnSuffix;
+    if (jumpType === "penultimate" && marks.penTouchdown === null) {
+      detectStatus.textContent += " Penultimate step not found — mark manually if visible.";
+    }
+    refreshJumpOverlay();
+    return;
+  }
+  multiJumpRows = buildMultiJumpRows(jumps, frameTimes ?? undefined, meta.fps, meta.stretch);
+  renderMultiJumpPanel();
+  const first = jumps[0]!;
+  marks.stepOff = first.stepOff;
+  marks.penTouchdown = null;
+  marks.penTakeoff = null;
+  marks.touchdown = first.touchdown;
+  marks.takeoff = first.takeoff;
+  marks.landing = first.landing;
+  frame = first.touchdown;
+  detectStatus.textContent = (
+    meta.lowConfidence || checkNotes.length
+      ? `Found ${jumps.length} jumps — Check marks flagged. Review each one.`
+      : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`
+  ) + warnSuffix;
+  refreshJumpOverlay();
+}
+
+/** Re-run jump resolution when the type changes after Auto (keeps pose samples). */
+function reResolveFromCache(jumpType: JumpType): void {
+  const cache = lastDetectCache;
+  if (!cache || !cache.candidates.length) return;
+  const requireDrop = !isApproachJumpType(jumpType);
+  const timing = {
+    captureFps: cache.captureFps,
+    stretch: cache.stretch,
+    frameTimes: cache.frameTimes,
+  };
+  const resolved = resolveJumpSet(cache.candidates, timing, {
+    jumpCount: jumpCountChoice,
+    requireDrop,
+    stepOffHint: requireDrop
+      ? cache.candidates.map((c) => c.stepOff).find((v) => v !== null) ?? null
+      : null,
+  });
+  const diagnostics: DetectDiagnostics = {
+    ...cache.diagnostics,
+    jumpType: formatJumpType(jumpType),
+    notes: [
+      `Re-resolved for ${formatJumpType(jumpType)} (pose kept; no re-scan).`,
+      `Require drop/step-off: ${requireDrop ? "yes" : "no (approach)"}`,
+      ...resolved.notes,
+      ...resolved.warnings,
+      ...resolved.rejected.slice(0, 6).map((r) => `Rejected TD${r.touchdown}: ${r.rejectReason}`),
+    ],
+    lowConfidence: resolved.lowConfidence || resolved.warnings.length > 0,
+    rejectStage: resolved.jumps.length && !resolved.implausible ? "ok" : cache.diagnostics.rejectStage,
+    candidates: cache.candidates,
+  };
+  lastDetectCache = { ...cache, diagnostics };
+  poseSamples = cache.samples;
+  showDetectDiagnostics(diagnostics);
+  if (resolved.implausible || !resolved.jumps.length) {
+    detectStatus.textContent =
+      "No plausible jump for this type (contact 80–1000 ms, flight ≥150 ms). Mark by hand, or pick another type.";
+    multiJumpPanel.hidden = true;
+    refreshJumpOverlay();
+    return;
+  }
+  applyResolvedJumps(resolved.jumps, jumpType, {
+    lowConfidence: resolved.lowConfidence || resolved.warnings.length > 0,
+    notes: diagnostics.notes,
+    fps: cache.captureFps,
+    stretch: cache.stretch,
+  });
 }
 
 function renderMultiJumpPanel(): void {

@@ -31,6 +31,8 @@ export interface DetectDiagnostics {
   candidates: DetectCandidate[];
   lowConfidence: boolean;
   notes: string[];
+  /** Active jump type when Auto ran (shown at top of diagnostics). */
+  jumpType?: string;
 }
 
 export function emptyDiagnostics(partial: Partial<DetectDiagnostics> = {}): DetectDiagnostics {
@@ -58,6 +60,7 @@ export function formatDetectDiagnostics(diag: DetectDiagnostics): string {
       ? `${diag.hipYMin.toFixed(3)}–${diag.hipYMax.toFixed(3)}`
       : "—";
   const lines = [
+    `Jump type: ${diag.jumpType ?? "—"}`,
     `Frames scanned: ${diag.framesScanned}`,
     `Frames with person: ${diag.framesWithPerson}`,
     `Median visibility — ankle ${vis(diag.medianAnkleVis)}, heel ${vis(diag.medianHeelVis)}, knee ${vis(diag.medianKneeVis)}, hip ${vis(diag.medianHipVis)}`,

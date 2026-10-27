@@ -301,6 +301,8 @@ export interface AnalyzeOptions {
   jumpCount?: JumpCountChoice;
   /** When false, Auto does not require a box drop (one-step / penultimate). */
   requireDrop?: boolean;
+  /** Display label for diagnostics (e.g. "Penultimate / Approach"). */
+  jumpTypeLabel?: string;
 }
 
 interface SamplePass {
@@ -587,19 +589,22 @@ export async function analyzeMultiClip(
       ? single.events.stepOff
       : candidates.map((c) => c.stepOff).find((v) => v !== null) ?? null;
 
+  const requireDrop = options.requireDrop !== false;
   const resolved = resolveJumpSet(candidates, timing, {
-    stepOffHint,
+    stepOffHint: requireDrop ? stepOffHint : null,
     jumpCount: options.jumpCount ?? "auto",
-    requireDrop: options.requireDrop !== false,
+    requireDrop,
   });
   const diagBase: DetectDiagnostics = {
     ...(single.ok ? single.diagnostics : multi.ok ? multi.diagnostics : single.diagnostics),
     ...mergedDiag,
+    jumpType: options.jumpTypeLabel,
     candidates: candidates.sort((a, b) => b.score - a.score),
     notes: [
       ...(single.diagnostics.notes ?? []),
       `Pose model: ${quality}`,
       `Jumps in clip: ${options.jumpCount ?? "auto"}`,
+      `Require drop/step-off: ${requireDrop ? "yes" : "no (approach)"}`,
       ...resolved.notes,
       ...resolved.warnings,
       ...resolved.rejected.slice(0, 6).map((r) => `Rejected TD${r.touchdown}: ${r.rejectReason}`),
@@ -624,6 +629,8 @@ export async function analyzeMultiClip(
         lowConfidence: true,
         notes: [...diagBase.notes, ...resolved.notes],
       },
+      // Keep pose samples so changing jump type can re-resolve without a full re-pose.
+      samples: merged,
     };
   }
 

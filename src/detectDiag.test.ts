@@ -80,6 +80,7 @@ describe("detect diagnostics + scoring", () => {
       lowConfidence: false,
       notes: [],
     });
+    expect(text).toContain("Jump type: —");
     expect(text).toContain("Frames scanned: 200");
     expect(text).toContain("Reject stage: no_rebound");
     expect(text).toContain("TD 40");

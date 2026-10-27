@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { DetectCandidate } from "./detectDiag.ts";
 import {
+  cycleRealDurations,
   cyclesSeparated,
   mergeFragmentCandidates,
+  pickApproachPlant,
   resolveJumpSet,
   validateCandidateRealTime,
 } from "./resolveJumps.ts";
@@ -189,5 +191,89 @@ describe("Byron false second jump (settling after one drop)", () => {
     expect(resolved.jumps).toHaveLength(2);
     expect(resolved.jumps[0]!.touchdown).toBe(80);
     expect(resolved.jumps[1]!.touchdown).toBe(340);
+  });
+});
+
+describe("Byron penultimate 2026-10-27b — approach plant", () => {
+  /**
+   * Exact-ish candidates from Byron's heavy Auto run (790 frames, 171.2 fps, 4×).
+   * Presentation clock ≈ 171.2/4 fps so 4× stretch yields real contact ~310 ms for TD292–TO345.
+   */
+  const playbackFps = 171.2 / 4;
+  const timing171 = {
+    captureFps: 171.2,
+    stretch: 4,
+    frameTimes: ptsClock(800, playbackFps),
+  };
+
+  const td556: DetectCandidate = {
+    stepOff: 424,
+    touchdown: 556,
+    takeoff: 559,
+    landing: 664,
+    score: 45.6,
+    note: "short contact",
+  };
+  const td292: DetectCandidate = {
+    stepOff: 291,
+    touchdown: 292,
+    takeoff: 345,
+    landing: 439,
+    score: 43.9,
+    note: "ok",
+  };
+  const td75: DetectCandidate = {
+    stepOff: null,
+    touchdown: 75,
+    takeoff: 76,
+    landing: 248,
+    score: 42.9,
+    note: "contact marginal",
+  };
+  const td439: DetectCandidate = {
+    stepOff: 438,
+    touchdown: 439,
+    takeoff: 466,
+    landing: 560,
+    score: 40.0,
+    note: "later fragment",
+  };
+
+  it("4× math: TD292–TO345 plant contact is ~310 ms real (in 120–400)", () => {
+    const { contactS } = cycleRealDurations(td292, timing171);
+    expect(contactS * 1000).toBeGreaterThan(120);
+    expect(contactS * 1000).toBeLessThan(400);
+    expect(contactS * 1000).toBeCloseTo((53 / playbackFps / 4) * 1000, 0);
+    expect(validateCandidateRealTime(td292, timing171).ok).toBe(true);
+  });
+
+  it("Drop mode still rejects approach candidates without a real drop, then fails merge", () => {
+    const resolved = resolveJumpSet([td556, td292, td75, td439], timing171, {
+      jumpCount: "auto",
+      requireDrop: true,
+    });
+    expect(resolved.notes.some((n) => /no real drop\/step-off/i.test(n))).toBe(true);
+    // Earliest-TD merge of these fragments is implausible (4 ms contact) — fails.
+    expect(resolved.jumps.length === 0 || resolved.implausible).toBe(true);
+  });
+
+  it("Penultimate / one-step keeps TD292 plant (no drop filter)", () => {
+    const resolved = resolveJumpSet([td556, td292, td75, td439], timing171, {
+      jumpCount: "auto",
+      requireDrop: false,
+    });
+    expect(resolved.implausible).toBe(false);
+    expect(resolved.jumps).toHaveLength(1);
+    expect(resolved.jumps[0]!.touchdown).toBe(292);
+    expect(resolved.jumps[0]!.takeoff).toBe(345);
+    expect(resolved.jumps[0]!.landing).toBe(439);
+    expect(resolved.notes.some((n) => /no real drop\/step-off/i.test(n))).toBe(false);
+  });
+
+  it("pickApproachPlant selects last contact before biggest valid flight", () => {
+    const plant = pickApproachPlant([td556, td292, td75, td439], timing171);
+    expect(plant).not.toBeNull();
+    expect(plant!.touchdown).toBe(292);
+    expect(plant!.takeoff).toBe(345);
   });
 });
