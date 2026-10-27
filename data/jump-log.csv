@@ -1,4 +1,4 @@
-Date,Week,Box,Arm swing,Height (in),GCT (ms),RSI (m/s),Notes,Jump type,Flight (ms),Test id
-2026-10-23,43,6,Yes,22.07,187.9,2.98,,drop,676.3,
-2026-10-23,43,6,Yes,21.8,183.7,3.01,,drop,672.1,
-2026-10-23,43,6,Yes,23.79,179.7,3.36,,drop,702.1,
+Date,Week,Box,Arm swing,Height (in),GCT (ms),RSI (m/s),Notes,Jump type,Flight (ms),Test id,Pen GCT (ms),Step gap (ms)
+2026-10-23,43,6,Yes,22.07,187.9,2.98,,drop,676.3,,,
+2026-10-23,43,6,Yes,21.8,183.7,3.01,,drop,672.1,,,
+2026-10-23,43,6,Yes,23.79,179.7,3.36,,drop,702.1,,,
