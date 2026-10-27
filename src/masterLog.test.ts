@@ -61,6 +61,34 @@ describe("master log row mapping", () => {
     expect(row[8]).toBe("drop");
     expect(row[9]).toBe(510.2);
     expect(row[10]).toBe("boxtest-1");
+    expect(row[11]).toBe("");
+    expect(row[12]).toBe("");
+  });
+
+  it("exports penultimate contact and step gap", () => {
+    const row = trialToMasterRow(
+      trial({
+        id: "p",
+        jumpType: "penultimate",
+        boxHeightIn: 0,
+        penultimateGctMs: 180.44,
+        stepGapMs: 95.2,
+      }),
+    );
+    expect(row[8]).toBe("penultimate");
+    expect(row[11]).toBe(180.4);
+    expect(row[12]).toBe(95.2);
+    const view = trialToViewRow(
+      trial({
+        id: "p2",
+        jumpType: "penultimate",
+        boxHeightIn: 0,
+        penultimateGctMs: 200,
+        stepGapMs: 80,
+      }),
+    );
+    expect(view.penGctMs).toBe(200);
+    expect(view.stepGapMs).toBe(80);
   });
 
   it("includes depth and box-test jumps", () => {

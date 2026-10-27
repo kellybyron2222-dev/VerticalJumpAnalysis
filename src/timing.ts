@@ -258,14 +258,22 @@ export function sanityWarnings(input: {
   boxHeightIn?: number | null;
   /** Free-fall time from the frame timestamps, in seconds. */
   fallSeconds?: number | null;
+  /** When true, use plant-contact band 120–400 ms instead of 80–1000. */
+  plantContact?: boolean;
 }): string[] {
   const warnings: string[] = [];
   if (input.heightIn !== null) {
     if (input.heightIn > 40) warnings.push("Jump height is over 40 in.");
     else if (input.heightIn < 2) warnings.push("Jump height is under 2 in.");
   }
-  if (input.gctMs !== null && (input.gctMs < 80 || input.gctMs > 1000)) {
-    warnings.push("Contact time is outside 80–1000 ms.");
+  if (input.gctMs !== null) {
+    if (input.plantContact) {
+      if (input.gctMs < 120 || input.gctMs > 400) {
+        warnings.push("Plant contact is outside 120–400 ms.");
+      }
+    } else if (input.gctMs < 80 || input.gctMs > 1000) {
+      warnings.push("Contact time is outside 80–1000 ms.");
+    }
   }
   // ~2.5 in to ~40 in of free fall. A single average fps (Photos' 171) misses this.
   if (input.fallSeconds != null && (input.fallSeconds < 0.11 || input.fallSeconds > 0.45)) {

@@ -14,6 +14,8 @@ export const MASTER_LOG_HEADERS = [
   "Jump type",
   "Flight (ms)",
   "Test id",
+  "Pen GCT (ms)",
+  "Step gap (ms)",
 ] as const;
 
 export type MasterLogHeader = (typeof MASTER_LOG_HEADERS)[number];
@@ -31,6 +33,8 @@ export type MasterLogRow = [
   string,
   number,
   string,
+  number | "",
+  number | "",
 ];
 
 export type MasterSortKey =
@@ -60,6 +64,8 @@ export interface MasterLogViewRow {
   testId: string;
   notes: string;
   createdAt: string;
+  penGctMs: number | "";
+  stepGapMs: number | "";
 }
 
 /** ISO week number (1–53) for a local calendar date. */
@@ -104,6 +110,10 @@ export function trialToMasterRow(trial: TrialRecord): MasterLogRow {
     trial.jumpType,
     round1(trial.flightMs),
     trial.boxTestId ?? trial.setId ?? "",
+    trial.penultimateGctMs != null && Number.isFinite(trial.penultimateGctMs)
+      ? round1(trial.penultimateGctMs)
+      : "",
+    trial.stepGapMs != null && Number.isFinite(trial.stepGapMs) ? round1(trial.stepGapMs) : "",
   ];
 }
 
@@ -123,6 +133,8 @@ export function trialToViewRow(trial: TrialRecord): MasterLogViewRow {
     testId: row[10],
     notes: row[7],
     createdAt: trial.createdAt,
+    penGctMs: row[11],
+    stepGapMs: row[12],
   };
 }
 

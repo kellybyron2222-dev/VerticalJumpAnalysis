@@ -108,6 +108,13 @@ describe("sanityWarnings", () => {
     expect(sanityWarnings({ heightIn: 15, gctMs: 79 })).toHaveLength(1);
     expect(sanityWarnings({ heightIn: 15, gctMs: 1001 })).toHaveLength(1);
     expect(sanityWarnings({ heightIn: 50, gctMs: 2000 })).toHaveLength(2);
+    expect(sanityWarnings({ heightIn: 15, gctMs: 100, plantContact: true })).toEqual([
+      "Plant contact is outside 120–400 ms.",
+    ]);
+    expect(sanityWarnings({ heightIn: 15, gctMs: 250, plantContact: true })).toEqual([]);
+    expect(sanityWarnings({ heightIn: 15, gctMs: 450, plantContact: true })).toEqual([
+      "Plant contact is outside 120–400 ms.",
+    ]);
   });
 
   it("flags a jump and a box estimate that cannot both be real", () => {
