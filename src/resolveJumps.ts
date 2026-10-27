@@ -409,52 +409,7 @@ export function resolveJumpSet(
   }
   const reps = auto.kept;
 
-  if (reps.length >= 2) {
-    const sorted = [...reps].sort((a, b) => a.touchdown - b.touchdown);
-    let separated = true;
-    for (let i = 1; i < sorted.length; i += 1) {
-      if (!cyclesSeparated(sorted[i - 1]!, sorted[i]!, timing)) {
-        separated = false;
-        break;
-      }
-    }
-    if (separated) {
-      const limited = sorted.slice(0, 4);
-      const jumps = limited.map(toEvents);
-      const warnings = landingCheckWarnings(jumps, timing);
-      return {
-        jumps,
-        valid: limited,
-        rejected,
-        lowConfidence: false,
-        notes: [...notes, `Auto kept ${limited.length} separated rep(s).`],
-        implausible: false,
-        warnings,
-      };
-    }
-    notes.push(
-      requireDrop
-        ? "Valid cycles overlap or touch — merging to one jump."
-        : "Valid cycles overlap or touch — picking approach plant (biggest valid flight).",
-    );
-  }
-
-  // Single-jump path: prefer best Auto rep; else merge / approach plant.
-  if (reps.length === 1) {
-    const jumps = [toEvents(reps[0]!)];
-    const warnings = landingCheckWarnings(jumps, timing);
-    return {
-      jumps,
-      valid: reps,
-      rejected,
-      lowConfidence: false,
-      notes: [...notes, "Auto kept one rep."],
-      implausible: false,
-      warnings,
-    };
-  }
-
-  // Approach: never earliest-TD merge — plant = last contact before biggest valid flight.
+  // Approach: always plant = biggest valid flight (never drop-merge / multi-rep split).
   if (!requireDrop) {
     const plant = pickApproachPlant(reps.length ? reps : valid.length ? valid : candidates, timing);
     if (!plant) {
@@ -481,18 +436,77 @@ export function resolveJumpSet(
         warnings: [],
       };
     }
+    const flightMs = check.flightS * 1000;
+    let largestFlightMs = flightMs;
+    for (const c of valid.length ? valid : candidates) {
+      const f = cycleRealDurations(c, timing).flightS * 1000;
+      if (Number.isFinite(f) && f > largestFlightMs) largestFlightMs = f;
+    }
     notes.push(
-      `Approach plant TD${plant.touchdown} TO${plant.takeoff} LD${plant.landing} (biggest valid flight).`,
+      `Approach plant TD${plant.touchdown} TO${plant.takeoff} LD${plant.landing}` +
+        ` (flight ${flightMs.toFixed(0)} ms; largest clip flight ${largestFlightMs.toFixed(0)} ms).`,
     );
     const jumps = [plant];
+    const warnings = landingCheckWarnings(jumps, timing);
+    if (flightMs < largestFlightMs * 0.85) {
+      warnings.push(
+        `Check marks: plant flight ${flightMs.toFixed(0)} ms < 85% of largest clip flight ${largestFlightMs.toFixed(0)} ms — verify plant/TO/LD.`,
+      );
+    }
     return {
       jumps,
       valid,
       rejected,
-      lowConfidence: rejected.length > 0 && valid.length === 0,
+      lowConfidence:
+        (rejected.length > 0 && valid.length === 0) ||
+        warnings.some((w) => /Check marks/i.test(w)),
       notes,
       implausible: false,
-      warnings: landingCheckWarnings(jumps, timing),
+      warnings,
+    };
+  }
+
+  if (reps.length >= 2) {
+    const sorted = [...reps].sort((a, b) => a.touchdown - b.touchdown);
+    let separated = true;
+    for (let i = 1; i < sorted.length; i += 1) {
+      if (!cyclesSeparated(sorted[i - 1]!, sorted[i]!, timing)) {
+        separated = false;
+        break;
+      }
+    }
+    if (separated) {
+      const limited = sorted.slice(0, 4);
+      const jumps = limited.map(toEvents);
+      const warnings = landingCheckWarnings(jumps, timing);
+      return {
+        jumps,
+        valid: limited,
+        rejected,
+        lowConfidence: false,
+        notes: [...notes, `Auto kept ${limited.length} separated rep(s).`],
+        implausible: false,
+        warnings,
+      };
+    }
+    notes.push("Valid cycles overlap or touch — merging to one jump.");
+  }
+
+  // Single-jump path: prefer best Auto rep; else merge fragments.
+  if (reps.length === 1) {
+    const jumps = [toEvents(reps[0]!)];
+    const warnings = landingCheckWarnings(jumps, timing);
+    return {
+      jumps,
+      valid: reps,
+      rejected,
+      lowConfidence: false,
+      notes: [
+        ...notes,
+        `Auto kept one rep TD${reps[0]!.touchdown} TO${reps[0]!.takeoff} LD${reps[0]!.landing}.`,
+      ],
+      implausible: false,
+      warnings,
     };
   }
 

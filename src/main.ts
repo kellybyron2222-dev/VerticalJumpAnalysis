@@ -78,8 +78,13 @@ import {
 } from "./jumpTypePref.ts";
 import {
   approachExtraMetrics,
+  approachPlausibilityWarnings,
   detectPenultimate,
+  formatFootContactNotes,
+  listFootContactsBeforePlant,
   plantContactOutOfBand,
+  penultimateContactOutOfBand,
+  stepGapOutOfBand,
 } from "./penultimate.ts";
 import {
   createTrial,
@@ -1687,28 +1692,93 @@ function applyResolvedJumps(
   setCheckMarksFlag(checkNotes.length > 0, checkNotes[0] ?? "");
   const warnSuffix = checkNotes.length ? ` ${checkNotes.join(" ")}` : "";
   if (jumps.length === 1) {
+    // Approach penultimate notes may append more Check marks below.
     const events = jumps[0]!;
     marks.stepOff = events.stepOff;
     marks.touchdown = events.touchdown;
     marks.takeoff = events.takeoff;
     marks.landing = events.landing;
+    const approachTiming = {
+      fps: meta.fps,
+      stretch: meta.stretch,
+      frameTimes: frameTimes ?? undefined,
+    };
+    let approachNotes: string[] = [];
+    if (jumpType === "penultimate" || jumpType === "oneStep") {
+      const footEvents = listFootContactsBeforePlant(
+        poseSamples,
+        events.touchdown,
+        approachTiming,
+      );
+      approachNotes = formatFootContactNotes(footEvents);
+      approachNotes.push(
+        `Plant frames used: TD${events.touchdown} TO${events.takeoff} LD${events.landing}`,
+      );
+    }
     if (jumpType === "penultimate") {
-      const pen = detectPenultimate(poseSamples, events.touchdown);
+      const pen = detectPenultimate(poseSamples, events.touchdown, approachTiming);
       marks.penTouchdown = pen?.touchdown ?? null;
       marks.penTakeoff = pen?.takeoff ?? null;
+      const extra = approachExtraMetrics({
+        plantTouchdown: events.touchdown,
+        penultimateTouchdown: marks.penTouchdown,
+        penultimateTakeoff: marks.penTakeoff,
+        fps: meta.fps,
+        stretch: meta.stretch,
+        frameTimes: frameTimes ?? undefined,
+      });
+      const plantFlightMs =
+        realSecondsOnClock(
+          frameTimes ?? undefined,
+          events.takeoff,
+          events.landing,
+          meta.fps,
+          meta.stretch,
+        ) * 1000;
+      const largestFlightMs = largestCandidateFlightMs(meta.fps, meta.stretch);
+      const approachWarn = approachPlausibilityWarnings({
+        penultimateGctMs: extra.penultimateGctMs,
+        stepGapMs: extra.stepGapMs,
+        plantFlightMs: Number.isFinite(plantFlightMs) ? plantFlightMs : null,
+        largestFlightMs,
+        penultimateFound: pen !== null,
+      });
+      approachNotes.push(...approachWarn);
+      if (pen) {
+        approachNotes.push(
+          `Penultimate ${pen.foot} TD${pen.touchdown} TO${pen.takeoff}` +
+            (extra.penultimateGctMs != null
+              ? ` · contact ${extra.penultimateGctMs.toFixed(0)} ms · gap ${extra.stepGapMs?.toFixed(0) ?? "—"} ms`
+              : ""),
+        );
+      }
+      if (approachWarn.length) {
+        setCheckMarksFlag(true, approachWarn[0]!);
+        checkNotes.push(...approachWarn);
+      }
     } else {
       marks.penTouchdown = null;
       marks.penTakeoff = null;
     }
+    if (approachNotes.length && lastDetectCache) {
+      const diagnostics = {
+        ...lastDetectCache.diagnostics,
+        notes: [...(lastDetectCache.diagnostics.notes ?? []), ...approachNotes],
+      };
+      lastDetectCache = { ...lastDetectCache, diagnostics };
+      showDetectDiagnostics(diagnostics);
+    }
     frame = events.touchdown;
     multiJumpPanel.hidden = true;
+    const flagged = meta.lowConfidence || checkNotes.length > 0 || !checkMarksFlag.hidden;
     detectStatus.textContent = (
-      meta.lowConfidence || checkNotes.length
+      flagged
         ? "Marks set — Check marks flagged. Use Go to / Set on each event."
         : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
-    ) + warnSuffix;
+    ) + (checkNotes.length ? ` ${checkNotes.join(" ")}` : "");
     if (jumpType === "penultimate" && marks.penTouchdown === null) {
       detectStatus.textContent += " Penultimate step not found — mark manually if visible.";
+      setCheckMarksFlag(true, "Check marks — penultimate step not found. Mark TD/TO manually.");
     }
     refreshJumpOverlay();
     return;
@@ -1729,6 +1799,25 @@ function applyResolvedJumps(
       : `Found ${jumps.length} jumps. Review the set below, then save included jumps.`
   ) + warnSuffix;
   refreshJumpOverlay();
+}
+
+/** Largest real flight among last Auto candidates (ms), for approach plausibility. */
+function largestCandidateFlightMs(fps: number, stretch: number): number | null {
+  const candidates = lastDetectCache?.candidates;
+  if (!candidates?.length || !(fps > 0)) return null;
+  let best = 0;
+  for (const c of candidates) {
+    if (!(c.takeoff < c.landing)) continue;
+    const s = realSecondsOnClock(
+      frameTimes ?? undefined,
+      c.takeoff,
+      c.landing,
+      fps,
+      stretch,
+    );
+    if (Number.isFinite(s) && s * 1000 > best) best = s * 1000;
+  }
+  return best > 0 ? best : null;
 }
 
 /** Re-run jump resolution when the type changes after Auto (keeps pose samples). */
@@ -2053,9 +2142,28 @@ function render(): void {
     warnings.length === 0 ? "" : `${warnings.join(" ")} Check the marks. Timing uses each frame's timestamp.`;
 
   const plantBad = approachNow && plantContactOutOfBand(preview.gctMs);
+  const penBad = jumpTypeNow === "penultimate" && penultimateContactOutOfBand(penExtra.penultimateGctMs);
+  const gapBad = jumpTypeNow === "penultimate" && stepGapOutOfBand(penExtra.stepGapMs);
+  const penMissing =
+    jumpTypeNow === "penultimate" &&
+    marks.touchdown !== null &&
+    marks.penTouchdown === null &&
+    marks.penTakeoff === null;
   if (plantBad) {
     checkMarksFlag.hidden = false;
     checkMarksFlag.textContent = "Check marks — plant contact outside 120–400 ms.";
+    marksPanel.classList.toggle("marks-attention", true);
+  } else if (penBad) {
+    checkMarksFlag.hidden = false;
+    checkMarksFlag.textContent = "Check marks — penultimate contact outside 80–300 ms.";
+    marksPanel.classList.toggle("marks-attention", true);
+  } else if (gapBad) {
+    checkMarksFlag.hidden = false;
+    checkMarksFlag.textContent = "Check marks — step gap outside 60–400 ms.";
+    marksPanel.classList.toggle("marks-attention", true);
+  } else if (penMissing && !detectMarksFlagged) {
+    checkMarksFlag.hidden = false;
+    checkMarksFlag.textContent = "Check marks — penultimate step not found. Mark TD/TO manually.";
     marksPanel.classList.toggle("marks-attention", true);
   } else if (detectMarksFlagged) {
     checkMarksFlag.hidden = false;

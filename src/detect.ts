@@ -19,6 +19,10 @@ export interface FootSample {
   footX?: number;
   /** Lowest point of the higher foot, when both feet are visible. The trailing foot leaves the box last. */
   upperFootY?: number;
+  /** Left ankle/heel lowest Y (0–1), when that foot is visible. */
+  leftFootY?: number;
+  /** Right ankle/heel lowest Y (0–1), when that foot is visible. */
+  rightFootY?: number;
   /** Mid-hip Y when available (larger = lower in frame). */
   hipY?: number;
   /** Contact-side heel landmark X (0–1), when known — height annotation. */
@@ -89,6 +93,14 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
           sample.upperFootY !== undefined && Number.isFinite(sample.upperFootY)
             ? sample.upperFootY
             : prev?.upperFootY,
+        leftFootY:
+          sample.leftFootY !== undefined && Number.isFinite(sample.leftFootY)
+            ? sample.leftFootY
+            : prev?.leftFootY,
+        rightFootY:
+          sample.rightFootY !== undefined && Number.isFinite(sample.rightFootY)
+            ? sample.rightFootY
+            : prev?.rightFootY,
         hipY: sample.hipY !== undefined && Number.isFinite(sample.hipY) ? sample.hipY : prev?.hipY,
         heelX:
           sample.heelX !== undefined && Number.isFinite(sample.heelX) ? sample.heelX : prev?.heelX,

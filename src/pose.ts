@@ -237,6 +237,10 @@ export function sampleFromLandmarks(
   const sample: FootSample = { frame, footY: contact };
   if (contactX !== null) sample.footX = contactX;
   if (upper !== null) sample.upperFootY = upper;
+  const leftY = lowestPoint(landmarks, LEFT_ANKLE_HEEL, MIN_VISIBILITY);
+  const rightY = lowestPoint(landmarks, RIGHT_ANKLE_HEEL, MIN_VISIBILITY);
+  if (leftY !== null) sample.leftFootY = leftY;
+  if (rightY !== null) sample.rightFootY = rightY;
   if (hip !== null) sample.hipY = hip;
   const heel = contactHeelXY(landmarks, contactX);
   if (heel) {
