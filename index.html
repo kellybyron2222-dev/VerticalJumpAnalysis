@@ -138,8 +138,8 @@
             <h3>Full frame</h3>
             <p>
               Drop/depth: whole body, the box, and the landing area stay in frame. One-step /
-              penultimate: side-on, phone at hip height — last two steps, takeoff, and landing all in
-              frame.
+              penultimate: side-on, phone at hip height — keep the last two steps (penultimate + plant),
+              takeoff, and landing fully in frame so plant and penultimate contact can be marked.
             </p>
           </li>
           <li>
@@ -239,6 +239,8 @@
                 <th><button type="button" data-sort="rsi">RSI</button></th>
                 <th><button type="button" data-sort="testId">Test id</button></th>
                 <th><button type="button" data-sort="notes">Notes</button></th>
+                <th>Pen GCT (ms)</th>
+                <th>Step gap (ms)</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -437,7 +439,7 @@
 
           <h3 class="section-label" id="marks-heading">Event marks</h3>
           <div class="marks" id="marks-panel">
-            <article class="mark" data-event="stepoff">
+            <article class="mark" data-event="stepoff" id="mark-stepoff">
               <div>
                 <h3>Step-off</h3>
                 <p id="so-frame">Not set</p>
@@ -448,9 +450,31 @@
                 <button type="button" id="clear-so" class="text-button" disabled>Clear</button>
               </div>
             </article>
+            <article class="mark" data-event="pen-td" id="mark-pen-td" hidden>
+              <div>
+                <h3>Penultimate touchdown</h3>
+                <p id="pen-td-frame">Not set</p>
+              </div>
+              <div class="mark-actions">
+                <button type="button" id="set-pen-td">Set</button>
+                <button type="button" id="goto-pen-td" disabled>Go to</button>
+                <button type="button" id="clear-pen-td" class="text-button" disabled>Clear</button>
+              </div>
+            </article>
+            <article class="mark" data-event="pen-to" id="mark-pen-to" hidden>
+              <div>
+                <h3>Penultimate toe-off</h3>
+                <p id="pen-to-frame">Not set</p>
+              </div>
+              <div class="mark-actions">
+                <button type="button" id="set-pen-to">Set</button>
+                <button type="button" id="goto-pen-to" disabled>Go to</button>
+                <button type="button" id="clear-pen-to" class="text-button" disabled>Clear</button>
+              </div>
+            </article>
             <article class="mark" data-event="touchdown">
               <div>
-                <h3>Touchdown</h3>
+                <h3 id="td-label">Touchdown</h3>
                 <p id="td-frame">Not set</p>
               </div>
               <div class="mark-actions">
@@ -564,7 +588,7 @@
                 <dd id="m-height-cm" class="sub">in</dd>
               </div>
               <div class="metric-card">
-                <dt>Contact time</dt>
+                <dt id="m-gct-label">Contact time</dt>
                 <dd id="m-gct">—</dd>
                 <dd class="sub">ms</dd>
               </div>
@@ -574,9 +598,19 @@
                 <dd class="sub">ms</dd>
               </div>
               <div class="metric-card">
-                <dt>RSI</dt>
+                <dt id="m-rsi-label">RSI</dt>
                 <dd id="m-rsi">—</dd>
                 <dd class="sub">ratio</dd>
+              </div>
+              <div class="metric-card" id="m-pen-gct-card" hidden>
+                <dt>Penultimate contact</dt>
+                <dd id="m-pen-gct">—</dd>
+                <dd class="sub">ms</dd>
+              </div>
+              <div class="metric-card" id="m-step-gap-card" hidden>
+                <dt>Step gap</dt>
+                <dd id="m-step-gap">—</dd>
+                <dd class="sub">ms</dd>
               </div>
             </dl>
             <p id="metrics-warning" class="form-error" role="alert" hidden></p>

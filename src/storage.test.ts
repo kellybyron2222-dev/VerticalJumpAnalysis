@@ -86,6 +86,30 @@ describe("createTrial", () => {
     expect(trial?.boxHeightIn).toBe(0);
   });
 
+  it("stores penultimate marks and approach extras", () => {
+    const trial = createTrial({
+      id: "pen1",
+      createdAt: "2026-10-27T12:00:00.000Z",
+      fps: 240,
+      jumpType: "penultimate",
+      boxHeightIn: 0,
+      armSwing: true,
+      notes: "",
+      touchdownFrame: 50,
+      takeoffFrame: 90,
+      landingFrame: 180,
+      penultimateTouchdownFrame: 10,
+      penultimateTakeoffFrame: 35,
+      penultimateGctMs: 104.2,
+      stepGapMs: 62.5,
+    });
+    expect(trial).not.toBeNull();
+    expect(trial?.penultimateTouchdownFrame).toBe(10);
+    expect(trial?.penultimateTakeoffFrame).toBe(35);
+    expect(trial?.penultimateGctMs).toBe(104.2);
+    expect(trial?.stepGapMs).toBe(62.5);
+  });
+
   it("stores metrics with the slow-mo factor applied once", () => {
     const trial = createTrial({
       id: "stretched",

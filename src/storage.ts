@@ -55,6 +55,10 @@ export interface NewTrialInput {
   frameTimes?: readonly number[];
   id?: string;
   createdAt?: string;
+  penultimateTouchdownFrame?: number | null;
+  penultimateTakeoffFrame?: number | null;
+  penultimateGctMs?: number | null;
+  stepGapMs?: number | null;
 }
 
 export interface KeyValueStore {
@@ -126,7 +130,17 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
     return null;
   }
 
-  const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame" | "boxTestId" | "setId"> = {};
+  const extra: Pick<
+    TrialRecord,
+    | "slowMoFactor"
+    | "stepOffFrame"
+    | "boxTestId"
+    | "setId"
+    | "penultimateTouchdownFrame"
+    | "penultimateTakeoffFrame"
+    | "penultimateGctMs"
+    | "stepGapMs"
+  > = {};
   if (input.slowMoFactor !== undefined && Number.isFinite(input.slowMoFactor) && input.slowMoFactor > 0) {
     extra.slowMoFactor = input.slowMoFactor;
   }
@@ -143,6 +157,26 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
   }
   if (typeof input.setId === "string" && input.setId.length > 0) {
     extra.setId = input.setId;
+  }
+  if (
+    typeof input.penultimateTouchdownFrame === "number" &&
+    Number.isInteger(input.penultimateTouchdownFrame) &&
+    input.penultimateTouchdownFrame >= 0
+  ) {
+    extra.penultimateTouchdownFrame = input.penultimateTouchdownFrame;
+  }
+  if (
+    typeof input.penultimateTakeoffFrame === "number" &&
+    Number.isInteger(input.penultimateTakeoffFrame) &&
+    input.penultimateTakeoffFrame >= 0
+  ) {
+    extra.penultimateTakeoffFrame = input.penultimateTakeoffFrame;
+  }
+  if (input.penultimateGctMs != null && Number.isFinite(input.penultimateGctMs)) {
+    extra.penultimateGctMs = input.penultimateGctMs;
+  }
+  if (input.stepGapMs != null && Number.isFinite(input.stepGapMs)) {
+    extra.stepGapMs = input.stepGapMs;
   }
 
   return {

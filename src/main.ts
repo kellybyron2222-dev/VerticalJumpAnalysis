@@ -72,6 +72,11 @@ import {
   saveJumpTypePref,
 } from "./jumpTypePref.ts";
 import {
+  approachExtraMetrics,
+  detectPenultimate,
+  plantContactOutOfBand,
+} from "./penultimate.ts";
+import {
   createTrial,
   loadTrials,
   saveTrials,
@@ -276,7 +281,14 @@ const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const highAccuracy = must<HTMLInputElement>("#high-accuracy");
 const jumpCountChips = document.querySelectorAll<HTMLButtonElement>("#jump-count-chips button");
 const boxFields = must<HTMLElement>("#box-fields");
-const stepOffArticle = document.querySelector<HTMLElement>("#set-so")?.closest("article") ?? null;
+const stepOffArticle = must<HTMLElement>("#mark-stepoff");
+const markPenTd = must<HTMLElement>("#mark-pen-td");
+const markPenTo = must<HTMLElement>("#mark-pen-to");
+const tdLabel = must<HTMLElement>("#td-label");
+const mGctLabel = must<HTMLElement>("#m-gct-label");
+const mRsiLabel = must<HTMLElement>("#m-rsi-label");
+const mPenGctCard = must<HTMLElement>("#m-pen-gct-card");
+const mStepGapCard = must<HTMLElement>("#m-step-gap-card");
 const detectStatus = must<HTMLElement>("#detect-status");
 const detectProgressWrap = must<HTMLElement>(".detect-progress");
 const detectProgressBar = must<HTMLProgressElement>("#detect-progress-bar");
@@ -326,7 +338,11 @@ function setDetectProgress(fraction: number | null, message?: string): void {
   if (message !== undefined) detectStatus.textContent = message;
 }
 
+/** Sticky flag from auto-detect notes; plant-band Check marks may overlay in render(). */
+let detectMarksFlagged = false;
+
 function setCheckMarksFlag(on: boolean, detail = ""): void {
+  detectMarksFlagged = on;
   checkMarksFlag.hidden = !on;
   checkMarksFlag.textContent = on
     ? detail || "Check marks — contact/flight look off. Use Set on each event."
@@ -366,6 +382,8 @@ const marks = {
   touchdown: null as number | null,
   takeoff: null as number | null,
   landing: null as number | null,
+  penTouchdown: null as number | null,
+  penTakeoff: null as number | null,
 };
 
 let frame = 0;
@@ -537,6 +555,8 @@ for (const button of stepButtons) {
 }
 
 bindMark("stepOff", "#set-so", "#goto-so", "#clear-so");
+bindMark("penTouchdown", "#set-pen-td", "#goto-pen-td", "#clear-pen-td");
+bindMark("penTakeoff", "#set-pen-to", "#goto-pen-to", "#clear-pen-to");
 bindMark("touchdown", "#set-td", "#goto-td", "#clear-td");
 bindMark("takeoff", "#set-to", "#goto-to", "#clear-to");
 bindMark("landing", "#set-ld", "#goto-ld", "#clear-ld");
@@ -815,6 +835,8 @@ function renderMasterLog(): void {
       row.rsi.toFixed(2),
       row.testId || "—",
       row.notes || "—",
+      row.penGctMs === "" ? "—" : row.penGctMs.toFixed(1),
+      row.stepGapMs === "" ? "—" : row.stepGapMs.toFixed(1),
     ];
     for (const text of cells) {
       const td = document.createElement("td");
@@ -1165,10 +1187,22 @@ function applyJumpTypeUi(jumpType: JumpType): void {
   const radio = jumpForm.querySelector<HTMLInputElement>(`input[name="jumpType"][value="${jumpType}"]`);
   if (radio) radio.checked = true;
   const approach = isApproachJumpType(jumpType);
+  const penultimate = jumpType === "penultimate";
   boxFields.hidden = approach;
-  if (stepOffArticle) stepOffArticle.hidden = approach;
+  stepOffArticle.hidden = approach;
+  markPenTd.hidden = !penultimate;
+  markPenTo.hidden = !penultimate;
+  tdLabel.textContent = approach ? "Plant touchdown" : "Touchdown";
+  mGctLabel.textContent = approach ? "Plant contact" : "Contact time";
+  mRsiLabel.textContent = approach ? "Plant RSI" : "RSI";
+  mPenGctCard.hidden = !penultimate;
+  mStepGapCard.hidden = !penultimate;
   const boxEstimate = document.querySelector<HTMLElement>("#box-estimate");
   if (boxEstimate && approach) boxEstimate.hidden = true;
+  if (!penultimate) {
+    marks.penTouchdown = null;
+    marks.penTakeoff = null;
+  }
   saveJumpTypePref(store, jumpType);
 }
 
@@ -1351,7 +1385,10 @@ function loadFile(file: File): void {
   const generation = loadGeneration;
   ready = false;
   frame = 0;
+  setCheckMarksFlag(false);
   marks.stepOff = null;
+  marks.penTouchdown = null;
+  marks.penTakeoff = null;
   marks.touchdown = null;
   marks.takeoff = null;
   marks.landing = null;
@@ -1584,6 +1621,14 @@ async function runDetection(): Promise<void> {
       marks.touchdown = events.touchdown;
       marks.takeoff = events.takeoff;
       marks.landing = events.landing;
+      if (jumpType === "penultimate") {
+        const pen = detectPenultimate(poseSamples, events.touchdown);
+        marks.penTouchdown = pen?.touchdown ?? null;
+        marks.penTakeoff = pen?.takeoff ?? null;
+      } else {
+        marks.penTouchdown = null;
+        marks.penTakeoff = null;
+      }
       frame = events.touchdown;
       multiJumpPanel.hidden = true;
       detectStatus.textContent = (
@@ -1591,6 +1636,9 @@ async function runDetection(): Promise<void> {
           ? "Marks set — Check marks flagged. Use Go to / Set on each event."
           : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
       ) + warnSuffix;
+      if (jumpType === "penultimate" && marks.penTouchdown === null) {
+        detectStatus.textContent += " Penultimate step not found — mark manually if visible.";
+      }
       refreshJumpOverlay();
       return;
     }
@@ -1598,6 +1646,8 @@ async function runDetection(): Promise<void> {
     renderMultiJumpPanel();
     const first = jumps[0]!;
     marks.stepOff = first.stepOff;
+    marks.penTouchdown = null;
+    marks.penTakeoff = null;
     marks.touchdown = first.touchdown;
     marks.takeoff = first.takeoff;
     marks.landing = first.landing;
@@ -1830,6 +1880,8 @@ function render(): void {
   }
 
   renderMark(marks.stepOff, "#so-frame", "#goto-so", "#clear-so");
+  renderMark(marks.penTouchdown, "#pen-td-frame", "#goto-pen-td", "#clear-pen-td");
+  renderMark(marks.penTakeoff, "#pen-to-frame", "#goto-pen-to", "#clear-pen-to");
   renderMark(marks.touchdown, "#td-frame", "#goto-td", "#clear-td");
   renderMark(marks.takeoff, "#to-frame", "#goto-to", "#clear-to");
   renderMark(marks.landing, "#ld-frame", "#goto-ld", "#clear-ld");
@@ -1839,6 +1891,8 @@ function render(): void {
   const playhead = must<HTMLElement>("#playhead");
   playhead.style.left = count <= 1 ? "0%" : `${(frame / (count - 1)) * 100}%`;
 
+  const jumpTypeNow = parseJumpType(selectedValue("jumpType"));
+  const approachNow = isApproachJumpType(jumpTypeNow);
   const preview = previewMetrics({
     touchdown: marks.touchdown,
     takeoff: marks.takeoff,
@@ -1847,8 +1901,24 @@ function render(): void {
     slowMoFactor: stretch,
     frameTimes: frameTimes ?? undefined,
   });
+  const penExtra =
+    jumpTypeNow === "penultimate" && marks.touchdown !== null && fps !== null
+      ? approachExtraMetrics({
+          plantTouchdown: marks.touchdown,
+          penultimateTouchdown: marks.penTouchdown,
+          penultimateTakeoff: marks.penTakeoff,
+          fps,
+          stretch,
+          frameTimes: frameTimes ?? undefined,
+        })
+      : { penultimateGctMs: null, stepGapMs: null };
   const anyNumber =
-    preview.gctMs !== null || preview.flightMs !== null || preview.heightIn !== null || preview.rsi !== null;
+    preview.gctMs !== null ||
+    preview.flightMs !== null ||
+    preview.heightIn !== null ||
+    preview.rsi !== null ||
+    penExtra.penultimateGctMs !== null ||
+    penExtra.stepGapMs !== null;
   metricsHint.hidden = preview.message === null;
   if (preview.message) metricsHint.textContent = preview.message;
   metricsValues.hidden = !anyNumber;
@@ -1858,6 +1928,10 @@ function render(): void {
   must<HTMLElement>("#m-height-cm").textContent =
     preview.heightCm === null ? "in" : `${formatHeightCm(preview.heightCm)}`;
   must<HTMLElement>("#m-rsi").textContent = preview.rsi === null ? "—" : formatRsi(preview.rsi);
+  must<HTMLElement>("#m-pen-gct").textContent =
+    penExtra.penultimateGctMs === null ? "—" : formatMsValue(penExtra.penultimateGctMs);
+  must<HTMLElement>("#m-step-gap").textContent =
+    penExtra.stepGapMs === null ? "—" : formatMsValue(penExtra.stepGapMs);
 
   const estimate =
     fps === null || marks.stepOff === null || marks.touchdown === null
@@ -1869,10 +1943,25 @@ function render(): void {
     gctMs: preview.gctMs,
     boxHeightIn: selectedBox,
     fallSeconds: estimate?.fallSeconds ?? null,
+    plantContact: approachNow,
   });
   metricsWarning.hidden = warnings.length === 0;
   metricsWarning.textContent =
     warnings.length === 0 ? "" : `${warnings.join(" ")} Check the marks. Timing uses each frame's timestamp.`;
+
+  const plantBad = approachNow && plantContactOutOfBand(preview.gctMs);
+  if (plantBad) {
+    checkMarksFlag.hidden = false;
+    checkMarksFlag.textContent = "Check marks — plant contact outside 120–400 ms.";
+    marksPanel.classList.toggle("marks-attention", true);
+  } else if (detectMarksFlagged) {
+    checkMarksFlag.hidden = false;
+    marksPanel.classList.toggle("marks-attention", true);
+  } else {
+    checkMarksFlag.hidden = true;
+    checkMarksFlag.textContent = "";
+    marksPanel.classList.toggle("marks-attention", false);
+  }
 
   boxEstimate.hidden = estimate === null;
   boxEstimate.textContent =
@@ -2297,6 +2386,19 @@ function onSave(): void {
   }
   if (marks.touchdown === null || marks.takeoff === null || marks.landing === null) return;
 
+  const stretch = activeStretch();
+  const penExtra =
+    jumpType === "penultimate"
+      ? approachExtraMetrics({
+          plantTouchdown: marks.touchdown,
+          penultimateTouchdown: marks.penTouchdown,
+          penultimateTakeoff: marks.penTakeoff,
+          fps,
+          stretch,
+          frameTimes: frameTimes ?? undefined,
+        })
+      : { penultimateGctMs: null, stepGapMs: null };
+
   const trial = createTrial({
     fps,
     jumpType,
@@ -2306,9 +2408,13 @@ function onSave(): void {
     touchdownFrame: marks.touchdown,
     takeoffFrame: marks.takeoff,
     landingFrame: marks.landing,
-    slowMoFactor: activeStretch(),
+    slowMoFactor: stretch,
     stepOffFrame: approach ? null : marks.stepOff,
     frameTimes: frameTimes ?? undefined,
+    penultimateTouchdownFrame: jumpType === "penultimate" ? marks.penTouchdown : null,
+    penultimateTakeoffFrame: jumpType === "penultimate" ? marks.penTakeoff : null,
+    penultimateGctMs: penExtra.penultimateGctMs,
+    stepGapMs: penExtra.stepGapMs,
   });
   if (!trial) {
     formError.hidden = false;
@@ -2317,7 +2423,10 @@ function onSave(): void {
   }
 
   const trials = loadTrials(store);
+  setCheckMarksFlag(false);
   marks.stepOff = null;
+  marks.penTouchdown = null;
+  marks.penTakeoff = null;
   marks.touchdown = null;
   marks.takeoff = null;
   marks.landing = null;
@@ -2507,12 +2616,22 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
 
   const grid = document.createElement("div");
   grid.className = "jump-metric-grid";
-  for (const [label, value] of [
+  const approachTrial = isApproachJumpType(trial.jumpType);
+  const metricRows: [string, string][] = [
     ["Height", formatHeightIn(trial.heightIn)],
-    ["Contact", formatMilliseconds(trial.gctMs)],
+    [approachTrial ? "Plant contact" : "Contact", formatMilliseconds(trial.gctMs)],
     ["Flight", formatMilliseconds(trial.flightMs)],
-    ["RSI", formatRsi(trial.rsi)],
-  ] as const) {
+    [approachTrial ? "Plant RSI" : "RSI", formatRsi(trial.rsi)],
+  ];
+  if (trial.jumpType === "penultimate") {
+    if (trial.penultimateGctMs != null && Number.isFinite(trial.penultimateGctMs)) {
+      metricRows.push(["Pen contact", formatMilliseconds(trial.penultimateGctMs)]);
+    }
+    if (trial.stepGapMs != null && Number.isFinite(trial.stepGapMs)) {
+      metricRows.push(["Step gap", formatMilliseconds(trial.stepGapMs)]);
+    }
+  }
+  for (const [label, value] of metricRows) {
     const cell = document.createElement("div");
     const dt = document.createElement("span");
     dt.className = "jump-metric-label";
@@ -2583,7 +2702,7 @@ function setTransportEnabled(enabled: boolean): void {
   scrubber.disabled = !enabled;
   autoButton.disabled = !enabled;
   cadenceButton.disabled = !enabled;
-  for (const id of ["#set-so", "#set-td", "#set-to", "#set-ld"]) {
+  for (const id of ["#set-so", "#set-pen-td", "#set-pen-to", "#set-td", "#set-to", "#set-ld"]) {
     must<HTMLButtonElement>(id).disabled = !enabled;
   }
 }
