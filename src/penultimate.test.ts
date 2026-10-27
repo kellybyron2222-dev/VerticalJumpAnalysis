@@ -203,6 +203,38 @@ describe("penultimate detect", () => {
     expect(refined.reason).toMatch(/refined|first hit/i);
   });
 
+  it("plant refine ignores toe/index landmarks (g plant path independent of penultimate)", () => {
+    // Misleading toe-down before plant must not pull plant TD earlier than ankle/heel.
+    const playback = 171.2 / 4;
+    const timing = { fps: 171.2, stretch: 4, frameTimes: pts(400, playback) };
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame <= 200; frame += 1) {
+      let left = 0.7;
+      let right = 0.7;
+      let leftToe: number | undefined;
+      if (frame >= 80 && frame <= 100) {
+        right = 0.93; // other foot (pen)
+        leftToe = 0.95; // toe flicker must not become plant
+      }
+      if (frame >= 109 && frame <= 162) left = 0.94;
+      if (frame >= 163) {
+        left = 0.55;
+        right = 0.55;
+      }
+      samples.push({
+        frame,
+        footY: Math.max(left, right),
+        leftFootY: left,
+        rightFootY: right,
+        leftHeelY: left,
+        rightHeelY: right,
+        leftToeY: leftToe,
+      });
+    }
+    const refined = refineApproachPlantTouchdown(samples, 163, 109, timing);
+    expect(refined.touchdown).toBe(109);
+  });
+
   it("rejects near-TO blink refine (<80 ms) and keeps unrefined plant TD", () => {
     // Byron 2026-10-27e failure: real plant ~109–163, pose blink on other foot near TO → 8 ms.
     const playback = 171.2 / 4;

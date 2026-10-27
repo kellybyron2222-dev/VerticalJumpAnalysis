@@ -490,6 +490,7 @@ export function refineApproachPlantTouchdown(
   let toIdx = ordered.findIndex((s) => s.frame >= takeoff);
   if (toIdx < 0) toIdx = ordered.length - 1;
 
+  // Plant refine is independent of penultimate toe/index merging — ankle+heel only (g).
   const downAt = (
     s: (typeof ordered)[number],
     foot: "L" | "R" | "C",

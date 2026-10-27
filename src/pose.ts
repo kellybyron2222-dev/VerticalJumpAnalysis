@@ -28,9 +28,11 @@ const MODEL_URLS: Record<PoseModelQuality, string> = {
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
 };
 
-const ANKLE_HEEL = [27, 29, 28, 30, 31, 32];
-const LEFT_ANKLE_HEEL = [27, 29, 31];
-const RIGHT_ANKLE_HEEL = [28, 30, 32];
+// Plant / flight contact uses ankle+heel only (build g). Foot-index (toe) is
+// sampled separately for penultimate search and must not move the plant floor.
+const ANKLE_HEEL = [27, 29, 28, 30];
+const LEFT_ANKLE_HEEL = [27, 29];
+const RIGHT_ANKLE_HEEL = [28, 30];
 const ANKLES = [27, 28];
 const HEELS = [29, 30];
 const LEFT_FOOT_INDEX = 31;
