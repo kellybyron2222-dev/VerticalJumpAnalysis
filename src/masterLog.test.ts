@@ -94,7 +94,7 @@ describe("master log row mapping", () => {
     const blob = buildWorkbookBlob(trials);
     const buf = await blob.arrayBuffer();
     const book = XLSX.read(buf, { type: "array" });
-    expect(book.SheetNames).toEqual(["Drop jump", "Depth jump"]);
+    expect(book.SheetNames).toEqual(["Drop jump", "Depth jump", "One-step", "Penultimate"]);
     const drop = XLSX.utils.sheet_to_json<(string | number)[]>(book.Sheets["Drop jump"]!, {
       header: 1,
     });

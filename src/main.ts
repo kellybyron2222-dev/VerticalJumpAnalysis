@@ -65,6 +65,13 @@ import {
   type JumpCountChoice,
 } from "./jumpCountPref.ts";
 import {
+  isApproachJumpType,
+  loadJumpTypePref,
+  metricsStripLabelsForType,
+  parseJumpType,
+  saveJumpTypePref,
+} from "./jumpTypePref.ts";
+import {
   createTrial,
   loadTrials,
   saveTrials,
@@ -268,6 +275,8 @@ const autoButton = must<HTMLButtonElement>("#auto-detect");
 const cancelDetect = must<HTMLButtonElement>("#cancel-detect");
 const highAccuracy = must<HTMLInputElement>("#high-accuracy");
 const jumpCountChips = document.querySelectorAll<HTMLButtonElement>("#jump-count-chips button");
+const boxFields = must<HTMLElement>("#box-fields");
+const stepOffArticle = document.querySelector<HTMLElement>("#set-so")?.closest("article") ?? null;
 const detectStatus = must<HTMLElement>("#detect-status");
 const detectProgressWrap = must<HTMLElement>(".detect-progress");
 const detectProgressBar = must<HTMLProgressElement>("#detect-progress-bar");
@@ -1141,6 +1150,7 @@ function bindActiveStore(profile: Profile): void {
   syncChartModeChips();
   boxInput.value = String(loadBoxHeightPref(store));
   syncChips();
+  applyJumpTypeUi(loadJumpTypePref(store));
   gctTargetInput.value = String(loadGctTargetMs(store));
   githubTokenInput.value = activeProfile.allowGithub ? loadGithubToken(store) : "";
   updateProfileChrome();
@@ -1149,6 +1159,24 @@ function bindActiveStore(profile: Profile): void {
   renderMasterLog();
   renderBoxTestRows();
   renderGithubSyncStatus();
+}
+
+function applyJumpTypeUi(jumpType: JumpType): void {
+  const radio = jumpForm.querySelector<HTMLInputElement>(`input[name="jumpType"][value="${jumpType}"]`);
+  if (radio) radio.checked = true;
+  const approach = isApproachJumpType(jumpType);
+  boxFields.hidden = approach;
+  if (stepOffArticle) stepOffArticle.hidden = approach;
+  const boxEstimate = document.querySelector<HTMLElement>("#box-estimate");
+  if (boxEstimate && approach) boxEstimate.hidden = true;
+  saveJumpTypePref(store, jumpType);
+}
+
+for (const input of jumpForm.querySelectorAll<HTMLInputElement>('input[name="jumpType"]')) {
+  input.addEventListener("change", () => {
+    applyJumpTypeUi(parseJumpType(input.value));
+    render();
+  });
 }
 
 function loginToProfile(profile: Profile): void {
@@ -1512,6 +1540,7 @@ async function runDetection(): Promise<void> {
   jumpOverlay = null;
   try {
     const stretch = activeStretch();
+    const jumpType = parseJumpType(selectedValue("jumpType"));
     const result = await analyzeMultiClip({
       video,
       seeker,
@@ -1522,6 +1551,7 @@ async function runDetection(): Promise<void> {
       frameTimes: frameTimes ?? undefined,
       poseQuality: highAccuracy.checked ? "heavy" : "lite",
       jumpCount: jumpCountChoice,
+      requireDrop: !isApproachJumpType(jumpType),
       onProgress: (message, fraction) => {
         setDetectProgress(fraction ?? detectProgressBar.value, message);
       },
@@ -1689,11 +1719,14 @@ multiJumpSave.addEventListener("click", () => {
 
 async function saveMultiJumpSet(): Promise<void> {
   const fps = readFps();
-  const jumpType = selectedValue("jumpType");
+  const jumpType = parseJumpType(selectedValue("jumpType"));
   const arm = selectedValue("armSwing");
-  const boxHeightIn = readBox();
-  if (fps === null || boxHeightIn === null || (jumpType !== "drop" && jumpType !== "depth") || arm === null) {
-    multiJumpStatus.textContent = "Set jump type, box height, and arm swing first.";
+  const approach = isApproachJumpType(jumpType);
+  const boxHeightIn = approach ? 0 : readBox();
+  if (fps === null || boxHeightIn === null || arm === null) {
+    multiJumpStatus.textContent = approach
+      ? "Set jump type and arm swing first."
+      : "Set jump type, box height, and arm swing first.";
     return;
   }
   const included = multiJumpRows.filter((row) => row.include);
@@ -1715,14 +1748,14 @@ async function saveMultiJumpSet(): Promise<void> {
       takeoffFrame: row.events.takeoff,
       landingFrame: row.events.landing,
       slowMoFactor: stretch,
-      stepOffFrame: row.events.stepOff,
+      stepOffFrame: approach ? null : row.events.stepOff,
       setId,
       frameTimes: frameTimes ?? undefined,
     });
     if (trial) created.push(trial);
   }
   if (created.length === 0) {
-    multiJumpStatus.textContent = "Could not build trials from marks.";
+    multiJumpStatus.textContent = "Could not build jumps from marks.";
     return;
   }
   const existing = loadTrials(store);
@@ -2057,6 +2090,7 @@ async function exportJumpCard(): Promise<void> {
       heightIn: preview.heightIn,
       gctMs: preview.gctMs,
       rsi: preview.rsi,
+      labels: metricsStripLabelsForType(parseJumpType(selectedValue("jumpType"))),
     });
     if (!blob) throw new Error("Could not build PNG.");
     const who = (activeProfile?.name ?? "jump").replace(/[^\w.-]+/g, "_");
@@ -2121,6 +2155,7 @@ async function exportJumpVideo(): Promise<void> {
     heightIn: preview.heightIn,
     gctMs: preview.gctMs,
     rsi: preview.rsi,
+    labels: metricsStripLabelsForType(parseJumpType(selectedValue("jumpType"))),
   };
   const w = video.videoWidth || 720;
   const h = video.videoHeight || 1280;
@@ -2240,9 +2275,11 @@ function placePip(selector: string, value: number | null, count: number): void {
 
 function onSave(): void {
   const fps = readFps();
-  const jumpType = selectedValue("jumpType");
+  const jumpTypeRaw = selectedValue("jumpType");
+  const jumpType = parseJumpType(jumpTypeRaw);
   const arm = selectedValue("armSwing");
-  const boxHeightIn = readBox();
+  const approach = isApproachJumpType(jumpType);
+  const boxHeightIn = approach ? 0 : readBox();
   const message = trialFormError({
     fps,
     jumpType,
@@ -2252,7 +2289,7 @@ function onSave(): void {
     takeoff: marks.takeoff,
     landing: marks.landing,
   });
-  if (message || fps === null || boxHeightIn === null || (jumpType !== "drop" && jumpType !== "depth") || arm === null) {
+  if (message || fps === null || boxHeightIn === null || arm === null) {
     formError.hidden = false;
     formError.textContent = message ?? "Check the jump and try again.";
     saveStatus.textContent = "";
@@ -2262,7 +2299,7 @@ function onSave(): void {
 
   const trial = createTrial({
     fps,
-    jumpType: jumpType as JumpType,
+    jumpType,
     boxHeightIn,
     armSwing: arm === "yes",
     notes: notesInput.value,
@@ -2270,7 +2307,7 @@ function onSave(): void {
     takeoffFrame: marks.takeoff,
     landingFrame: marks.landing,
     slowMoFactor: activeStretch(),
-    stepOffFrame: marks.stepOff,
+    stepOffFrame: approach ? null : marks.stepOff,
     frameTimes: frameTimes ?? undefined,
   });
   if (!trial) {

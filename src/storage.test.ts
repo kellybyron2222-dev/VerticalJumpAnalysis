@@ -68,6 +68,24 @@ describe("createTrial", () => {
     expect(trial.rsi).toBeCloseTo(trial.heightM / 0.25, 10);
   });
 
+  it("saves one-step jumps without a box height", () => {
+    const trial = createTrial({
+      id: "os1",
+      createdAt: "2026-10-27T12:00:00.000Z",
+      fps: 240,
+      jumpType: "oneStep",
+      boxHeightIn: 0,
+      armSwing: true,
+      notes: "",
+      touchdownFrame: 10,
+      takeoffFrame: 50,
+      landingFrame: 140,
+    });
+    expect(trial).not.toBeNull();
+    expect(trial?.jumpType).toBe("oneStep");
+    expect(trial?.boxHeightIn).toBe(0);
+  });
+
   it("stores metrics with the slow-mo factor applied once", () => {
     const trial = createTrial({
       id: "stretched",

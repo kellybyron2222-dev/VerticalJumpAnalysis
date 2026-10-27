@@ -299,6 +299,8 @@ export interface AnalyzeOptions {
   poseQuality?: PoseModelQuality;
   /** Auto (default) or fixed 1–4 jumps in this clip. */
   jumpCount?: JumpCountChoice;
+  /** When false, Auto does not require a box drop (one-step / penultimate). */
+  requireDrop?: boolean;
 }
 
 interface SamplePass {
@@ -588,6 +590,7 @@ export async function analyzeMultiClip(
   const resolved = resolveJumpSet(candidates, timing, {
     stepOffHint,
     jumpCount: options.jumpCount ?? "auto",
+    requireDrop: options.requireDrop !== false,
   });
   const diagBase: DetectDiagnostics = {
     ...(single.ok ? single.diagnostics : multi.ok ? multi.diagnostics : single.diagnostics),

@@ -36,8 +36,13 @@ export function formatBoxInches(inches: number): string {
   return `${text} in`;
 }
 
-export function formatJumpType(jumpType: "drop" | "depth"): string {
-  return jumpType === "drop" ? "Drop jump" : "Depth jump";
+export function formatJumpType(
+  jumpType: "drop" | "depth" | "oneStep" | "penultimate",
+): string {
+  if (jumpType === "drop") return "Drop jump";
+  if (jumpType === "depth") return "Depth jump";
+  if (jumpType === "oneStep") return "One-step";
+  return "Penultimate / Approach";
 }
 
 export function formatArmSwing(armSwing: boolean): string {

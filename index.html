@@ -136,7 +136,11 @@
           </li>
           <li>
             <h3>Full frame</h3>
-            <p>Whole body, the box, and the landing area stay in frame.</p>
+            <p>
+              Drop/depth: whole body, the box, and the landing area stay in frame. One-step /
+              penultimate: side-on, phone at hip height — last two steps, takeoff, and landing all in
+              frame.
+            </p>
           </li>
           <li>
             <h3>Light</h3>
@@ -483,7 +487,7 @@
           <form id="jump-form">
             <fieldset>
               <legend>Jump type</legend>
-              <div class="segment" role="radiogroup" aria-label="Jump type">
+              <div class="segment" role="radiogroup" aria-label="Jump type" id="jump-type-group">
                 <label>
                   <input type="radio" name="jumpType" value="drop" />
                   <span>Drop jump</span>
@@ -492,31 +496,41 @@
                   <input type="radio" name="jumpType" value="depth" />
                   <span>Depth jump</span>
                 </label>
+                <label>
+                  <input type="radio" name="jumpType" value="oneStep" />
+                  <span>One-step</span>
+                </label>
+                <label>
+                  <input type="radio" name="jumpType" value="penultimate" />
+                  <span>Penultimate / Approach</span>
+                </label>
               </div>
             </fieldset>
 
-            <label class="field" for="box-height">
-              Box height (in)
-              <input
-                id="box-height"
-                type="number"
-                inputmode="decimal"
-                min="0.5"
-                step="0.5"
-                value="6"
-              />
-            </label>
-            <div class="chips" id="box-chips">
-              <button type="button" data-height="6">6</button>
-              <button type="button" data-height="8">8</button>
-              <button type="button" data-height="10">10</button>
-              <button type="button" data-height="12">12</button>
-              <button type="button" data-height="14">14</button>
-              <button type="button" data-height="16">16</button>
-              <button type="button" data-height="18">18</button>
-              <button type="button" data-custom="1">Custom</button>
+            <div id="box-fields">
+              <label class="field" for="box-height">
+                Box height (in)
+                <input
+                  id="box-height"
+                  type="number"
+                  inputmode="decimal"
+                  min="0.5"
+                  step="0.5"
+                  value="6"
+                />
+              </label>
+              <div class="chips" id="box-chips">
+                <button type="button" data-height="6">6</button>
+                <button type="button" data-height="8">8</button>
+                <button type="button" data-height="10">10</button>
+                <button type="button" data-height="12">12</button>
+                <button type="button" data-height="14">14</button>
+                <button type="button" data-height="16">16</button>
+                <button type="button" data-height="18">18</button>
+                <button type="button" data-custom="1">Custom</button>
+              </div>
+              <p id="box-estimate" class="box-estimate" hidden></p>
             </div>
-            <p id="box-estimate" class="box-estimate" hidden></p>
 
             <fieldset>
               <legend>Arm swing</legend>
@@ -601,7 +615,9 @@
             <select id="chart-jump-type">
               <option value="drop">Drop jump</option>
               <option value="depth">Depth jump</option>
-              <option value="all">Both</option>
+              <option value="oneStep">One-step</option>
+              <option value="penultimate">Penultimate / Approach</option>
+              <option value="all">All types</option>
             </select>
           </label>
           <fieldset class="chart-mode">

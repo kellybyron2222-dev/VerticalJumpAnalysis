@@ -136,11 +136,13 @@ export function hasDropOrCountermovement(
 export function filterAutoReps(
   valid: readonly DetectCandidate[],
   timing: JumpTimingContext,
+  options: { requireDrop?: boolean } = {},
 ): { kept: DetectCandidate[]; rejected: Array<DetectCandidate & { rejectReason: string }> } {
+  const requireDrop = options.requireDrop !== false;
   const rejected: Array<DetectCandidate & { rejectReason: string }> = [];
   const withDrop: DetectCandidate[] = [];
   for (const c of valid) {
-    if (!hasDropOrCountermovement(c, timing)) {
+    if (requireDrop && !hasDropOrCountermovement(c, timing)) {
       rejected.push({ ...c, rejectReason: "no real drop/step-off or countermovement" });
       continue;
     }
@@ -308,7 +310,12 @@ function toEvents(c: DetectCandidate): DetectedEvents {
 export function resolveJumpSet(
   candidates: readonly DetectCandidate[],
   timing: JumpTimingContext,
-  options: { stepOffHint?: number | null; jumpCount?: JumpCountChoice } = {},
+  options: {
+    stepOffHint?: number | null;
+    jumpCount?: JumpCountChoice;
+    /** When false (one-step / penultimate), do not require a box drop. Default true. */
+    requireDrop?: boolean;
+  } = {},
 ): ResolvedJumpSet {
   const notes: string[] = [];
   const rejected: Array<DetectCandidate & { rejectReason: string }> = [];
@@ -366,7 +373,7 @@ export function resolveJumpSet(
   }
 
   // Auto: quality-filter then keep up to 4 separated reps.
-  const auto = filterAutoReps(valid, timing);
+  const auto = filterAutoReps(valid, timing, { requireDrop: options.requireDrop !== false });
   rejected.push(...auto.rejected);
   for (const r of auto.rejected) {
     notes.push(`Auto dropped TD${r.touchdown}: ${r.rejectReason}`);

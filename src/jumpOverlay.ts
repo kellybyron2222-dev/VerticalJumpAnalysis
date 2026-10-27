@@ -34,6 +34,8 @@ export interface JumpOverlayMetrics {
   heightIn: number;
   gctMs: number;
   rsi: number;
+  /** Optional strip labels (defaults: Jump height / Contact time / RSI). */
+  labels?: { height?: string; contact?: string; rsi?: string };
 }
 
 export interface JumpOverlayModel {
@@ -227,9 +229,15 @@ export function drawMetricsStrip(
   ctx.stroke();
 
   const cols = [
-    { label: "Jump height", value: `${metrics.heightIn.toFixed(1)} in` },
-    { label: "Contact time", value: `${Math.round(metrics.gctMs)} ms` },
-    { label: "RSI", value: metrics.rsi.toFixed(2) },
+    {
+      label: metrics.labels?.height ?? "Jump height",
+      value: `${metrics.heightIn.toFixed(1)} in`,
+    },
+    {
+      label: metrics.labels?.contact ?? "Contact time",
+      value: `${Math.round(metrics.gctMs)} ms`,
+    },
+    { label: metrics.labels?.rsi ?? "RSI", value: metrics.rsi.toFixed(2) },
   ];
   const colW = width / 3;
   cols.forEach((col, i) => {

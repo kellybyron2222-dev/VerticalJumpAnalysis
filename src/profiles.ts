@@ -4,6 +4,7 @@ import { ACTIVE_BOX_TEST_KEY, WORKING_BOX_STORAGE_KEY } from "./boxTest.ts";
 import { CHART_MODE_PREF_KEY } from "./chartModePref.ts";
 import { GITHUB_SYNC_META_KEY, GITHUB_TOKEN_KEY } from "./githubSync.ts";
 import { JUMP_COUNT_PREF_KEY } from "./jumpCountPref.ts";
+import { JUMP_TYPE_PREF_KEY } from "./jumpTypePref.ts";
 import { GCT_TARGET_STORAGE_KEY } from "./raiseBox.ts";
 import { STORAGE_KEY, type KeyValueStore } from "./storage.ts";
 
@@ -21,6 +22,7 @@ export const VISITED_KEY = "jumpLab.visited.v1";
 export const PROFILE_SCOPED_KEYS = [
   STORAGE_KEY,
   BOX_HEIGHT_PREF_KEY,
+  JUMP_TYPE_PREF_KEY,
   JUMP_COUNT_PREF_KEY,
   CHART_MODE_PREF_KEY,
   WORKING_BOX_STORAGE_KEY,

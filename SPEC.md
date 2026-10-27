@@ -1,6 +1,6 @@
 # Jump Lab — product spec
 
-Mobile-first web app for one athlete, Byron, to analyze drop jumps and depth jumps filmed on an iPhone in slow motion (default 240 fps).
+Mobile-first web app for one athlete, Byron, to analyze drop/depth jumps and (milestone 7) one-step / penultimate-step approach jumps filmed on an iPhone in slow motion (default 240 fps).
 
 Future work should follow this document. Do the milestones in order. Finish and verify a milestone before starting the next one.
 
@@ -48,6 +48,8 @@ iPhone slo-mo clips picked from the camera roll often arrive stretched in time: 
 - Accuracy and repeatability of the event frames matter more than automation speed or visual polish.
 
 ## Camera setup guide
+
+Drop/depth: whole body, the box, and the landing area stay in frame. One-step / penultimate: side-on, phone at hip height; keep the last two steps, the takeoff, and the landing all in frame.
 
 A screen shown when the app opens. It is dismissible, and it is reachable again from the menu. It is not part of the analysis flow — opening a video, stepping frames, or saving a trial must not require re-reading it.
 
@@ -154,6 +156,18 @@ Done when:
 - Warn when a jump falls outside the slowed (high-capture-rate) section.
 - Single-jump clips keep the previous one-mark UI path. Unit tests cover multi segmentation and slowed-region detection from PTS.
 
+### Milestone 7 — One-step and penultimate / approach jumps
+
+Done when:
+
+- Jump Analysis has a jump-type picker: **Drop/Depth** (current default), **One-step**, **Penultimate/Approach**. Last choice remembered per profile.
+- For One-step and Penultimate: hide box height and drop-height / free-fall checks. Optimal Box Height test stays drop/depth only.
+- Auto-detect (same nudge + Check marks): plant touchdown (last foot contact before takeoff), takeoff, landing. Penultimate also tries penultimate foot touchdown and toe-off when visible; if missing, leave blank for manual mark. Reuse heel / foot-speed detectors. Rep/merge filters must **not** reject approach jumps for lacking a box drop.
+- Metrics: jump height from flight time (`g·t²/8` with slo-mo correction), plant contact time, plant RSI (height m / plant contact s). Penultimate also: penultimate contact time and step gap (penultimate toe-off → plant touchdown). Plant contact plausibility ~120–400 ms; flag outside. UI says “jump”, never “trial”.
+- Overlay / card / video style unchanged; metrics strip shows type-appropriate columns.
+- Saved jumps, master log, xlsx/CSV, GitHub sync: `jump_type` / Jump type column. Drop jump and Depth jump sheets unchanged; One-step and Penultimate on their own sheet(s). Charts and baselines filter by type.
+- Directions / camera: film side-on, phone at hip height; last two steps, takeoff, and landing all in frame.
+
 ## Hosting
 
 - `npm run build` (or the equivalent static export) must produce files that can be served from any static host.
@@ -166,8 +180,8 @@ Persist trial numbers only. Suggested record, once Milestone 1 exists (later mil
 
 - id, createdAt
 - fps
-- jump type: `drop` or `depth`
-- box height in inches
+- jump type: `drop`, `depth`, `oneStep`, or `penultimate`
+- box height in inches (0 / unused for one-step and penultimate)
 - arm swing: boolean
 - notes
 - touchdown, takeoff, and landing frame indexes

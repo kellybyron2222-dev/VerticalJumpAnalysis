@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import type { TrialRecord } from "./storage.ts";
+import type { JumpType, TrialRecord } from "./storage.ts";
 
 /** Workbook paste order first, then extras. */
 export const MASTER_LOG_HEADERS = [
@@ -50,7 +50,7 @@ export interface MasterLogViewRow {
   id: string;
   date: string;
   week: number | "";
-  jumpType: "drop" | "depth";
+  jumpType: JumpType;
   box: number;
   armSwing: boolean;
   heightIn: number;
@@ -188,13 +188,17 @@ function sheetFromPasteRows(trials: readonly TrialRecord[]) {
   return sheet;
 }
 
-/** Excel export: Drop jump + Depth jump sheets (paste columns only). */
+/** Excel export: Drop / Depth unchanged; One-step and Penultimate on their own sheets. */
 export function buildWorkbookBlob(trials: readonly TrialRecord[]): Blob {
   const drops = trials.filter((t) => t.jumpType === "drop");
   const depths = trials.filter((t) => t.jumpType === "depth");
+  const oneSteps = trials.filter((t) => t.jumpType === "oneStep");
+  const penults = trials.filter((t) => t.jumpType === "penultimate");
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheetFromPasteRows(drops), "Drop jump");
   XLSX.utils.book_append_sheet(book, sheetFromPasteRows(depths), "Depth jump");
+  XLSX.utils.book_append_sheet(book, sheetFromPasteRows(oneSteps), "One-step");
+  XLSX.utils.book_append_sheet(book, sheetFromPasteRows(penults), "Penultimate");
   const buffer = XLSX.write(book, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
   return new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -210,21 +214,22 @@ export function buildCsvText(trials: readonly TrialRecord[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-/** Master-log download CSV: Drop jump section then Depth jump section (paste columns). */
+/** Master-log download CSV: typed sections with paste columns. */
 export function buildExportCsvText(trials: readonly TrialRecord[]): string {
-  const drops = trials.filter((t) => t.jumpType === "drop");
-  const depths = trials.filter((t) => t.jumpType === "depth");
+  const sections: { title: string; rows: TrialRecord[] }[] = [
+    { title: "Drop jump", rows: trials.filter((t) => t.jumpType === "drop") },
+    { title: "Depth jump", rows: trials.filter((t) => t.jumpType === "depth") },
+    { title: "One-step", rows: trials.filter((t) => t.jumpType === "oneStep") },
+    { title: "Penultimate", rows: trials.filter((t) => t.jumpType === "penultimate") },
+  ];
   const lines: string[] = [];
-  lines.push("Drop jump");
-  lines.push(PASTE_LOG_HEADERS.join(","));
-  for (const trial of drops) {
-    lines.push(pasteRowFromTrial(trial).map(csvEscape).join(","));
-  }
-  lines.push("");
-  lines.push("Depth jump");
-  lines.push(PASTE_LOG_HEADERS.join(","));
-  for (const trial of depths) {
-    lines.push(pasteRowFromTrial(trial).map(csvEscape).join(","));
+  for (const section of sections) {
+    if (lines.length) lines.push("");
+    lines.push(section.title);
+    lines.push(PASTE_LOG_HEADERS.join(","));
+    for (const trial of section.rows) {
+      lines.push(pasteRowFromTrial(trial).map(csvEscape).join(","));
+    }
   }
   return `${lines.join("\n")}\n`;
 }

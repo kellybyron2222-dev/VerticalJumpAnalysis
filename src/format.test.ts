@@ -30,6 +30,8 @@ describe("formatters", () => {
     expect(formatBoxInches(12.25)).toBe("12.25 in");
     expect(formatJumpType("drop")).toBe("Drop jump");
     expect(formatJumpType("depth")).toBe("Depth jump");
+    expect(formatJumpType("oneStep")).toBe("One-step");
+    expect(formatJumpType("penultimate")).toBe("Penultimate / Approach");
     expect(formatArmSwing(true)).toBe("Arm swing");
     expect(formatArmSwing(false)).toBe("No arm swing");
   });

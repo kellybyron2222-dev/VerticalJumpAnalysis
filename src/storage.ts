@@ -2,7 +2,7 @@ import { computeTrialMetrics } from "./metrics.ts";
 
 export const STORAGE_KEY = "jumpLab.trials.v1";
 
-export type JumpType = "drop" | "depth";
+export type JumpType = "drop" | "depth" | "oneStep" | "penultimate";
 
 export interface TrialRecord {
   id: string;
@@ -29,6 +29,14 @@ export interface TrialRecord {
   boxTestId?: string;
   /** Multi-jump clip set id, when saved from a multi-jump analysis. */
   setId?: string;
+  /** Penultimate foot touchdown (approach), when marked. */
+  penultimateTouchdownFrame?: number;
+  /** Penultimate foot toe-off (approach), when marked. */
+  penultimateTakeoffFrame?: number;
+  /** Penultimate contact time (ms), when both penultimate marks exist. */
+  penultimateGctMs?: number;
+  /** Gap from penultimate toe-off to plant touchdown (ms). */
+  stepGapMs?: number;
 }
 
 export interface NewTrialInput {
@@ -71,9 +79,14 @@ export function isTrialRecord(value: unknown): value is TrialRecord {
     typeof record.createdAt === "string" &&
     isFiniteNumber(record.fps) &&
     record.fps > 0 &&
-    (record.jumpType === "drop" || record.jumpType === "depth") &&
+    (record.jumpType === "drop" ||
+      record.jumpType === "depth" ||
+      record.jumpType === "oneStep" ||
+      record.jumpType === "penultimate") &&
     isFiniteNumber(record.boxHeightIn) &&
-    record.boxHeightIn > 0 &&
+    (record.jumpType === "oneStep" || record.jumpType === "penultimate"
+      ? record.boxHeightIn >= 0
+      : record.boxHeightIn > 0) &&
     typeof record.armSwing === "boolean" &&
     typeof record.notes === "string" &&
     isFrame(record.touchdownFrame) &&
@@ -100,8 +113,18 @@ export function createTrial(input: NewTrialInput): TrialRecord | null {
     frameTimes: input.frameTimes,
   });
   if (!metrics) return null;
-  if (!Number.isFinite(input.boxHeightIn) || input.boxHeightIn <= 0) return null;
-  if (input.jumpType !== "drop" && input.jumpType !== "depth") return null;
+  const approach = input.jumpType === "oneStep" || input.jumpType === "penultimate";
+  if (!Number.isFinite(input.boxHeightIn) || (approach ? input.boxHeightIn < 0 : input.boxHeightIn <= 0)) {
+    return null;
+  }
+  if (
+    input.jumpType !== "drop" &&
+    input.jumpType !== "depth" &&
+    input.jumpType !== "oneStep" &&
+    input.jumpType !== "penultimate"
+  ) {
+    return null;
+  }
 
   const extra: Pick<TrialRecord, "slowMoFactor" | "stepOffFrame" | "boxTestId" | "setId"> = {};
   if (input.slowMoFactor !== undefined && Number.isFinite(input.slowMoFactor) && input.slowMoFactor > 0) {
