@@ -10,6 +10,7 @@ import {
   isShareAbort,
   isShareNotAllowed,
   masterRowsFromTrials,
+  pasteRowFromTrial,
   sortMasterRows,
   trialToMasterRow,
   trialToViewRow,
@@ -76,6 +77,7 @@ describe("master log row mapping", () => {
       }),
     );
     expect(row[8]).toBe("penultimate");
+    expect(row[2]).toBe(""); // Box blank for approach — not 0
     expect(row[11]).toBe(180.4);
     expect(row[12]).toBe(95.2);
     const view = trialToViewRow(
@@ -87,8 +89,19 @@ describe("master log row mapping", () => {
         stepGapMs: 80,
       }),
     );
+    expect(view.box).toBe("");
     expect(view.penGctMs).toBe(200);
     expect(view.stepGapMs).toBe(80);
+  });
+
+  it("leaves Box blank for one-step in CSV/xlsx paste rows", () => {
+    const row = trialToMasterRow(
+      trial({ id: "os", jumpType: "oneStep", boxHeightIn: 0 }),
+    );
+    expect(row[2]).toBe("");
+    expect(pasteRowFromTrial(trial({ id: "os2", jumpType: "oneStep", boxHeightIn: 0 }))[2]).toBe(
+      "",
+    );
   });
 
   it("includes depth and box-test jumps", () => {

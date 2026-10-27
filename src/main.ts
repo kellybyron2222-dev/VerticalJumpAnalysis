@@ -7,6 +7,7 @@ import "./style.css";
 import {
   formatArmSwing,
   formatBoxInches,
+  formatTrialTitle,
   formatClock,
   formatHeightCm,
   formatHeightIn,
@@ -847,7 +848,7 @@ function renderMasterLog(): void {
       row.date,
       row.week === "" ? "—" : String(row.week),
       row.jumpType,
-      String(row.box),
+      row.box === "" ? "" : String(row.box),
       row.armSwing ? "Yes" : "No",
       row.heightIn.toFixed(2),
       row.gctMs.toFixed(1),
@@ -2845,7 +2846,7 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
 
   const title = document.createElement("p");
   title.className = "jump-card-title";
-  title.textContent = `${formatJumpType(trial.jumpType)} · ${formatBoxInches(trial.boxHeightIn)}`;
+  title.textContent = formatTrialTitle(trial.jumpType, trial.boxHeightIn);
 
   const meta = document.createElement("p");
   meta.className = "notes";

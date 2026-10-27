@@ -36,6 +36,18 @@ export function formatBoxInches(inches: number): string {
   return `${text} in`;
 }
 
+/**
+ * Card/log title for a jump. Approach types omit box height (never "· 0 in").
+ */
+export function formatTrialTitle(
+  jumpType: "drop" | "depth" | "oneStep" | "penultimate",
+  boxHeightIn: number,
+): string {
+  const type = formatJumpType(jumpType);
+  if (jumpType === "oneStep" || jumpType === "penultimate") return type;
+  return `${type} · ${formatBoxInches(boxHeightIn)}`;
+}
+
 export function formatJumpType(
   jumpType: "drop" | "depth" | "oneStep" | "penultimate",
 ): string {

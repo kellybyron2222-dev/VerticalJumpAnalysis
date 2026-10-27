@@ -10,6 +10,7 @@ import {
   formatMilliseconds,
   formatMsValue,
   formatRsi,
+  formatTrialTitle,
 } from "./format.ts";
 
 describe("formatters", () => {
@@ -32,6 +33,9 @@ describe("formatters", () => {
     expect(formatJumpType("depth")).toBe("Depth jump");
     expect(formatJumpType("oneStep")).toBe("One-step");
     expect(formatJumpType("penultimate")).toBe("Penultimate / Approach");
+    expect(formatTrialTitle("penultimate", 0)).toBe("Penultimate / Approach");
+    expect(formatTrialTitle("oneStep", 0)).toBe("One-step");
+    expect(formatTrialTitle("drop", 12)).toBe("Drop jump · 12 in");
     expect(formatArmSwing(true)).toBe("Arm swing");
     expect(formatArmSwing(false)).toBe("No arm swing");
   });

@@ -28,10 +28,12 @@ export interface ApproachTiming {
 
 /**
  * Hard rejection floor (foot chatter). Soft Check-marks bands stay stricter.
- * Below hard floor → still return best candidate as lowConfidence when possible.
+ * Below hard floor → marks null (do not auto-apply a fragment).
  */
 export const MIN_PEN_CONTACT_MS = 50;
 export const MIN_STEP_GAP_MS = 30;
+/** Merge same-foot contact fragments separated by ≤ this real gap (ms). */
+export const MERGE_CONTACT_GAP_MS = 25;
 /** Soft Check-marks bands (shown when marks exist but look off). */
 export const PEN_CONTACT_SOFT_MIN_MS = 80;
 export const PEN_CONTACT_SOFT_MAX_MS = 300;
@@ -73,13 +75,28 @@ function onGroundY(y: number | undefined, model: GroundModel): boolean {
   return y !== undefined && Number.isFinite(y) && y >= model.ground - model.tolerance;
 }
 
-/** Heel-OR-toe: either landmark near ground counts as contact. */
+/** Heel OR toe/ankle OR foot-index: any landmark near ground counts as contact. */
 function footOnGround(
   heelOrToeY: number | undefined,
   altY: number | undefined,
   model: GroundModel,
+  thirdY?: number | undefined,
 ): boolean {
-  return onGroundY(heelOrToeY, model) || onGroundY(altY, model);
+  return onGroundY(heelOrToeY, model) || onGroundY(altY, model) || onGroundY(thirdY, model);
+}
+
+/** Lowest of heel / foot / optional toe-index for ground series. */
+function lowestFootY(
+  a: number | undefined,
+  b: number | undefined,
+  c?: number | undefined,
+): number | undefined {
+  let best: number | undefined;
+  for (const y of [a, b, c]) {
+    if (y === undefined || !Number.isFinite(y)) continue;
+    if (best === undefined || y > best) best = y;
+  }
+  return best;
 }
 
 /**
@@ -109,7 +126,7 @@ function groundForFootSeries(
 function fillGroundHoles(
   frames: readonly number[],
   onGround: readonly boolean[],
-  maxHoleFrames = 4,
+  maxHoleFrames = 8,
 ): boolean[] {
   const out = [...onGround];
   let lastOn = -1;
@@ -124,6 +141,61 @@ function fillGroundHoles(
     lastOn = i;
   }
   return out;
+}
+
+/**
+ * Merge same-foot contact fragments separated by ≤ MERGE_CONTACT_GAP_MS real time.
+ * Fixes phone pose dropouts that leave a short toe-off end as the "penultimate".
+ */
+export function mergeContactFragments(
+  events: readonly FootContactEvent[],
+  timing?: ApproachTiming,
+): FootContactEvent[] {
+  if (events.length <= 1) return [...events];
+  const byFoot = new Map<"L" | "R" | "C", FootContactEvent[]>();
+  for (const ev of events) {
+    const list = byFoot.get(ev.foot) ?? [];
+    list.push(ev);
+    byFoot.set(ev.foot, list);
+  }
+  const out: FootContactEvent[] = [];
+  for (const [, list] of byFoot) {
+    list.sort((a, b) => a.touchdown - b.touchdown || a.takeoff - b.takeoff);
+    let cur = { ...list[0]! };
+    for (let i = 1; i < list.length; i += 1) {
+      const next = list[i]!;
+      const gapStart = cur.takeoff;
+      const gapEnd = next.touchdown;
+      let gapMs: number | null = null;
+      if (gapEnd > gapStart) {
+        gapMs = realMs(timing, gapStart, gapEnd);
+        if (gapMs === null && timing && timing.fps > 0) {
+          gapMs = ((gapEnd - gapStart) / timing.fps / (timing.stretch ?? 1)) * 1000;
+        }
+      } else {
+        gapMs = 0; // overlapping / contiguous
+      }
+      if (gapMs !== null && gapMs <= MERGE_CONTACT_GAP_MS) {
+        cur = {
+          foot: cur.foot,
+          touchdown: Math.min(cur.touchdown, next.touchdown),
+          takeoff: Math.max(cur.takeoff, next.takeoff),
+          contactMs: null,
+        };
+        cur.contactMs =
+          cur.touchdown < cur.takeoff ? realMs(timing, cur.touchdown, cur.takeoff) : 0;
+        if (cur.contactMs === null && timing && timing.fps > 0 && cur.takeoff > cur.touchdown) {
+          cur.contactMs =
+            ((cur.takeoff - cur.touchdown) / timing.fps / (timing.stretch ?? 1)) * 1000;
+        }
+        continue;
+      }
+      out.push(cur);
+      cur = { ...next };
+    }
+    out.push(cur);
+  }
+  return out.sort((a, b) => a.takeoff - b.takeoff || a.touchdown - b.touchdown);
 }
 
 /** Contact streaks for one foot series before `beforeFrame`. */
@@ -169,11 +241,15 @@ export function listFootContactsBeforePlant(
 
   const pushFoot = (
     foot: "L" | "R" | "C",
-    primary: readonly (number | undefined)[],
-    secondary: readonly (number | undefined)[],
+    heel: readonly (number | undefined)[],
+    footOrAnkle: readonly (number | undefined)[],
+    toeIndex: readonly (number | undefined)[],
   ) => {
-    const footModel = foot === "C" ? model : groundForFootSeries(primary, model);
-    const ground = primary.map((y, i) => footOnGround(y, secondary[i], footModel));
+    const series = heel.map((y, i) => lowestFootY(y, footOrAnkle[i], toeIndex[i]));
+    const footModel = foot === "C" ? model : groundForFootSeries(series, model);
+    const ground = heel.map((y, i) =>
+      footOnGround(y, footOrAnkle[i], footModel, toeIndex[i]),
+    );
     if (!ground.some(Boolean)) return;
     for (const streak of contactStreaksBefore(frames, ground, plantTouchdown)) {
       const td = frames[streak.tdIdx]!;
@@ -194,31 +270,65 @@ export function listFootContactsBeforePlant(
   if (hasLeft) {
     pushFoot(
       "L",
-      ordered.map((s) => s.leftHeelY ?? s.leftFootY),
-      ordered.map((s) => s.leftFootY ?? s.leftHeelY),
+      ordered.map((s) => s.leftHeelY),
+      ordered.map((s) => s.leftFootY),
+      ordered.map((s) => s.leftToeY),
     );
   }
   if (hasRight) {
     pushFoot(
       "R",
-      ordered.map((s) => s.rightHeelY ?? s.rightFootY),
-      ordered.map((s) => s.rightFootY ?? s.rightHeelY),
+      ordered.map((s) => s.rightHeelY),
+      ordered.map((s) => s.rightFootY),
+      ordered.map((s) => s.rightToeY),
     );
   }
   // Always include combined — phone L/R landmarks are often incomplete before plant.
   pushFoot(
     "C",
-    ordered.map((s) => s.heelY ?? s.footY),
+    ordered.map((s) => s.heelY),
     ordered.map((s) => s.footY),
+    ordered.map((s) => lowestFootY(s.leftToeY, s.rightToeY)),
   );
 
-  return out.sort((a, b) => a.takeoff - b.takeoff || a.touchdown - b.touchdown);
+  return mergeContactFragments(out, timing);
+}
+
+/**
+ * Foot that leads the plant into takeoff (last planted side). Penultimate is
+ * the last contact of the *other* foot before plant TD.
+ */
+function plantTakeoffLeadFoot(
+  ordered: readonly FootSample[],
+  plantTouchdown: number,
+  model: GroundModel,
+): "L" | "R" | "C" {
+  let plantIdx = ordered.findIndex((s) => s.frame >= plantTouchdown);
+  if (plantIdx < 0) plantIdx = ordered.length - 1;
+  let leftN = 0;
+  let rightN = 0;
+  const end = Math.min(ordered.length - 1, plantIdx + 40);
+  for (let i = plantIdx; i <= end; i += 1) {
+    const s = ordered[i]!;
+    if (footOnGround(s.leftHeelY, s.leftFootY, model, s.leftToeY)) leftN += 1;
+    if (footOnGround(s.rightHeelY, s.rightFootY, model, s.rightToeY)) rightN += 1;
+  }
+  if (leftN === 0 && rightN === 0) return "C";
+  if (leftN > rightN * 1.15) return "L";
+  if (rightN > leftN * 1.15) return "R";
+  // Tie-break: foot down at plant TD.
+  const s0 = ordered[plantIdx]!;
+  const l0 = footOnGround(s0.leftHeelY, s0.leftFootY, model, s0.leftToeY);
+  const r0 = footOnGround(s0.rightHeelY, s0.rightFootY, model, s0.rightToeY);
+  if (l0 && !r0) return "L";
+  if (r0 && !l0) return "R";
+  return leftN >= rightN ? "L" : "R";
 }
 
 /**
  * Find the contact cycle immediately before plant touchdown.
- * Either foot allowed; heel-OR-toe ground. Hard floor 50/30 ms — below that
- * still returns the best candidate as lowConfidence so Byron can review.
+ * Prefer last contact of the non-plant-lead foot; heel OR toe OR foot-index.
+ * Hard floor 50/30 ms — below that → marks null (no auto fragment).
  */
 export function detectPenultimateDetailed(
   samples: readonly FootSample[],
@@ -246,15 +356,7 @@ export function detectPenultimateDetailed(
     };
   }
 
-  let plantIdx = ordered.findIndex((s) => s.frame >= plantTouchdown);
-  if (plantIdx < 0) plantIdx = ordered.length - 1;
-  const plantSample = ordered[plantIdx]!;
-  const plantLeft = footOnGround(plantSample.leftHeelY, plantSample.leftFootY, model);
-  const plantRight = footOnGround(plantSample.rightHeelY, plantSample.rightFootY, model);
-  const plantFeet = new Set<"L" | "R" | "C">();
-  if (plantLeft) plantFeet.add("L");
-  if (plantRight) plantFeet.add("R");
-  if (!plantFeet.size) plantFeet.add("C");
+  const plantLead = plantTakeoffLeadFoot(ordered, plantTouchdown, model);
 
   const estimateMs = (start: number, end: number): number | null => {
     const timed = realMs(timing, start, end);
@@ -284,18 +386,22 @@ export function detectPenultimateDetailed(
     // Ignore tiny pose blinks (allow 1-frame listed contacts only in diagnostics).
     if (ev.takeoff - ev.touchdown < 1) continue;
 
-    const hardOk = contactMs >= MIN_PEN_CONTACT_MS && gapMs >= MIN_STEP_GAP_MS;
+    // Strict hard floor — never auto-apply a sub-50 ms fragment (rounding-safe).
+    const hardOk = contactMs + 0.05 >= MIN_PEN_CONTACT_MS && gapMs + 0.05 >= MIN_STEP_GAP_MS;
+    if (!hardOk) continue;
+
     let score = contactMs + gapMs * 0.35;
     // Prefer the last step before plant (closest takeoff).
     score += ev.takeoff * 0.05;
     // Prefer a clear airborne gap into plant.
     if (gapMs >= MIN_STEP_GAP_MS) score += 80;
-    // Either foot ok; slight preference for opposite of sole plant foot.
-    if (ev.foot !== "C" && plantFeet.size === 1 && !plantFeet.has(ev.foot)) score += 120;
-    if (ev.foot !== "C" && plantFeet.size === 2) score += 40;
+    // Prefer the foot that is NOT the plant-takeoff lead.
+    if (ev.foot !== "C" && plantLead !== "C" && ev.foot !== plantLead) score += 400;
+    if (ev.foot === plantLead) score -= 200;
     // Prefer L/R over combined when both exist.
     if (ev.foot !== "C") score += 30;
-    if (hardOk) score += 500;
+    // Longer contact wins over a late short fragment of the same step.
+    score += contactMs * 0.5;
     ranked.push({
       touchdown: ev.touchdown,
       takeoff: ev.takeoff,
@@ -310,13 +416,29 @@ export function detectPenultimateDetailed(
     return {
       marks: null,
       lowConfidence: true,
-      reason: `no ranked penultimate candidate (${events.length} contacts listed)`,
+      reason: `no penultimate ≥${MIN_PEN_CONTACT_MS} ms before plant (${events.length} contacts listed)`,
     };
   }
-  ranked.sort((a, b) => b.score - a.score || b.takeoff - a.takeoff);
-  const best = ranked[0]!;
+
+  // Prefer last contact of the foot that isn't the plant-takeoff lead; else any L/R; else C.
+  const opposite = ranked.filter(
+    (r) => r.foot !== "C" && plantLead !== "C" && r.foot !== plantLead,
+  );
+  const anyLr = ranked.filter((r) => r.foot !== "C");
+  const pool = opposite.length ? opposite : anyLr.length ? anyLr : ranked;
+  pool.sort((a, b) => b.takeoff - a.takeoff || b.contactMs - a.contactMs || b.score - a.score);
+  // Among last-ish contacts of the preferred foot, pick the longest merged step.
+  const lastTo = pool[0]!.takeoff;
+  const nearLast = pool.filter((r) => lastTo - r.takeoff <= 2);
+  nearLast.sort((a, b) => b.contactMs - a.contactMs || b.score - a.score);
+  const best = nearLast[0]!;
   const marks = { touchdown: best.touchdown, takeoff: best.takeoff, foot: best.foot };
-  if (best.hardOk) {
+  const softOk =
+    best.contactMs >= PEN_CONTACT_SOFT_MIN_MS &&
+    best.contactMs <= PEN_CONTACT_SOFT_MAX_MS &&
+    best.gapMs >= STEP_GAP_SOFT_MIN_MS &&
+    best.gapMs <= STEP_GAP_SOFT_MAX_MS;
+  if (softOk) {
     return {
       marks,
       lowConfidence: false,

@@ -29,6 +29,10 @@ export interface FootSample {
   /** Right heel landmark XY when visible (trail lock). */
   rightHeelX?: number;
   rightHeelY?: number;
+  /** Left foot-index (toe tip) Y when visible — heel OR toe OR index ground. */
+  leftToeY?: number;
+  /** Right foot-index (toe tip) Y when visible. */
+  rightToeY?: number;
   /** Mean heel visibility 0–1 when known — trail rejects low-vis samples. */
   heelVis?: number;
   /** Mid-hip Y when available (larger = lower in frame). */
@@ -125,6 +129,14 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
           sample.rightHeelY !== undefined && Number.isFinite(sample.rightHeelY)
             ? sample.rightHeelY
             : prev?.rightHeelY,
+        leftToeY:
+          sample.leftToeY !== undefined && Number.isFinite(sample.leftToeY)
+            ? sample.leftToeY
+            : prev?.leftToeY,
+        rightToeY:
+          sample.rightToeY !== undefined && Number.isFinite(sample.rightToeY)
+            ? sample.rightToeY
+            : prev?.rightToeY,
         heelVis:
           sample.heelVis !== undefined && Number.isFinite(sample.heelVis)
             ? sample.heelVis

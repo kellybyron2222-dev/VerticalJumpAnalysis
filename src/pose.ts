@@ -28,11 +28,13 @@ const MODEL_URLS: Record<PoseModelQuality, string> = {
     "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task",
 };
 
-const ANKLE_HEEL = [27, 29, 28, 30];
-const LEFT_ANKLE_HEEL = [27, 29];
-const RIGHT_ANKLE_HEEL = [28, 30];
+const ANKLE_HEEL = [27, 29, 28, 30, 31, 32];
+const LEFT_ANKLE_HEEL = [27, 29, 31];
+const RIGHT_ANKLE_HEEL = [28, 30, 32];
 const ANKLES = [27, 28];
 const HEELS = [29, 30];
+const LEFT_FOOT_INDEX = 31;
+const RIGHT_FOOT_INDEX = 32;
 const KNEES = [25, 26];
 const HIPS = [23, 24];
 /** Very low so black shoes / busy gym backgrounds still yield a track. */
@@ -250,6 +252,14 @@ export function sampleFromLandmarks(
   if (rightHeel && (rightHeel.visibility ?? 1) >= MIN_VISIBILITY) {
     sample.rightHeelX = rightHeel.x;
     sample.rightHeelY = rightHeel.y;
+  }
+  const leftToe = landmarks[LEFT_FOOT_INDEX];
+  const rightToe = landmarks[RIGHT_FOOT_INDEX];
+  if (leftToe && (leftToe.visibility ?? 1) >= MIN_VISIBILITY) {
+    sample.leftToeY = leftToe.y;
+  }
+  if (rightToe && (rightToe.visibility ?? 1) >= MIN_VISIBILITY) {
+    sample.rightToeY = rightToe.y;
   }
   const heelVis = meanVisibility(landmarks, HEELS);
   if (heelVis !== null) sample.heelVis = heelVis;

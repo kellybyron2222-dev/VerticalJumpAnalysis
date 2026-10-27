@@ -6,6 +6,7 @@ import {
   detectPenultimate,
   detectPenultimateDetailed,
   listFootContactsBeforePlant,
+  mergeContactFragments,
   plantContactOutOfBand,
   penultimateContactOutOfBand,
   refineApproachPlantTouchdown,
@@ -97,8 +98,8 @@ describe("penultimate detect", () => {
     expect(detectPenultimate(onlyPlant, 10, timing240)).toBeNull();
   });
 
-  it("shows low-confidence chatter candidate instead of inventing nothing", () => {
-    // 171.2 fps / 4×: 7 frames ≈ 41 ms real — below hard 50 ms, still returned + flagged.
+  it("rejects sub-50 ms chatter instead of auto-applying a fragment", () => {
+    // 171.2 fps / 4×: 7 frames ≈ 41 ms real — below hard 50 ms → marks null.
     const playback = 171.2 / 4;
     const timing = { fps: 171.2, stretch: 4, frameTimes: pts(400, playback) };
     const samples: FootSample[] = [];
@@ -109,9 +110,8 @@ describe("penultimate detect", () => {
       samples.push({ frame, footY, heelY: footY });
     }
     const result = detectPenultimateDetailed(samples, 288, timing);
-    expect(result.marks).not.toBeNull();
-    expect(result.lowConfidence).toBe(true);
-    expect(result.reason).toMatch(/low-confidence|verify/i);
+    expect(result.marks).toBeNull();
+    expect(result.reason).toMatch(/no penultimate|≥50/i);
   });
 
   it("tracks left/right feet and prefers real step over chatter", () => {
@@ -300,6 +300,84 @@ describe("penultimate detect", () => {
     expect(extra.penultimateGctMs!).toBeGreaterThanOrEqual(80);
     expect(extra.stepGapMs!).toBeGreaterThanOrEqual(30);
     expect(extra.stepGapMs!).toBeLessThan(400);
+  });
+
+  it("merges fragmented R66–92 and rejects short toe-off end (Byron 27g phone)", () => {
+    // Phone 27g: pose split the right penultimate; late fragment ~45.8 ms won.
+    // Gap between fragments ≤25 ms real → merge; pen ≈130–180, gap ≈80–130.
+    const playback = 171.2 / 4;
+    const timing = { fps: 171.2, stretch: 4, frameTimes: pts(400, playback) };
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame <= 320; frame += 1) {
+      let left = 0.72;
+      let right = 0.72;
+      let rightToe: number | undefined;
+      // Fragment A 66–78, brief hole, fragment B 82–92 (gap ~23 ms @171.2/4×).
+      if (frame >= 66 && frame <= 78) {
+        right = 0.91;
+        rightToe = 0.93;
+      }
+      if (frame >= 82 && frame <= 92) {
+        right = 0.9;
+        rightToe = 0.92;
+      }
+      if (frame > 92 && frame < 109) {
+        left = 0.68;
+        right = 0.68;
+      }
+      if (frame >= 109 && frame <= 162) {
+        left = 0.96;
+        if (frame >= 120) right = 0.94;
+      }
+      if (frame >= 163 && frame < 287) {
+        left = 0.5;
+        right = 0.5;
+      }
+      if (frame >= 287) {
+        left = 0.93;
+        right = 0.93;
+      }
+      samples.push({
+        frame,
+        footY: Math.max(left, right),
+        heelY: Math.max(left, right),
+        leftFootY: left,
+        rightFootY: right,
+        leftHeelY: left,
+        rightHeelY: right,
+        rightToeY: rightToe,
+      });
+    }
+    const merged = mergeContactFragments(
+      [
+        { foot: "R", touchdown: 66, takeoff: 78, contactMs: null },
+        { foot: "R", touchdown: 82, takeoff: 92, contactMs: null },
+      ],
+      timing,
+    );
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.touchdown).toBe(66);
+    expect(merged[0]!.takeoff).toBe(92);
+
+    const pen = detectPenultimateDetailed(samples, 109, timing);
+    expect(pen.marks).not.toBeNull();
+    expect(pen.marks!.foot).toBe("R");
+    expect(pen.marks!.touchdown).toBeGreaterThanOrEqual(64);
+    expect(pen.marks!.touchdown).toBeLessThanOrEqual(70);
+    expect(pen.marks!.takeoff).toBeGreaterThanOrEqual(88);
+    expect(pen.marks!.takeoff).toBeLessThan(109);
+    const extra = approachExtraMetrics({
+      plantTouchdown: 109,
+      penultimateTouchdown: pen.marks!.touchdown,
+      penultimateTakeoff: pen.marks!.takeoff,
+      fps: 171.2,
+      stretch: 4,
+      frameTimes: timing.frameTimes,
+    });
+    expect(extra.penultimateGctMs!).toBeGreaterThanOrEqual(130);
+    expect(extra.penultimateGctMs!).toBeLessThanOrEqual(180);
+    expect(extra.stepGapMs!).toBeGreaterThanOrEqual(80);
+    expect(extra.stepGapMs!).toBeLessThanOrEqual(130);
   });
 
   it("computes penultimate GCT and step gap", () => {

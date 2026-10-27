@@ -24,7 +24,7 @@ export type MasterLogHeader = (typeof MASTER_LOG_HEADERS)[number];
 export type MasterLogRow = [
   string,
   number | "",
-  number,
+  number | "",
   string,
   number,
   number,
@@ -55,7 +55,8 @@ export interface MasterLogViewRow {
   date: string;
   week: number | "";
   jumpType: JumpType;
-  box: number;
+  /** Box inches, or blank for one-step / penultimate. */
+  box: number | "";
   armSwing: boolean;
   heightIn: number;
   gctMs: number;
@@ -98,10 +99,12 @@ export function round1(value: number): number {
 export function trialToMasterRow(trial: TrialRecord): MasterLogRow {
   const created = new Date(trial.createdAt);
   const week = Number.isNaN(created.getTime()) ? "" : isoWeek(created);
+  const approach = trial.jumpType === "oneStep" || trial.jumpType === "penultimate";
   return [
     formatLogDate(trial.createdAt),
     week,
-    round2(trial.boxHeightIn),
+    // Approach: leave Box blank (not 0) in log / CSV / xlsx.
+    approach ? "" : round2(trial.boxHeightIn),
     trial.armSwing ? "Yes" : "No",
     round2(trial.heightIn),
     round1(trial.gctMs),
@@ -162,7 +165,7 @@ function sortValue(row: MasterLogViewRow, key: MasterSortKey): string | number {
     case "jumpType":
       return row.jumpType;
     case "box":
-      return row.box;
+      return row.box === "" ? -1 : row.box;
     case "arm":
       return row.armSwing ? 1 : 0;
     case "height":
