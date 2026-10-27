@@ -82,22 +82,67 @@ function footOnGround(
   return onGroundY(heelOrToeY, model) || onGroundY(altY, model);
 }
 
+/**
+ * Per-foot ground from that foot's own Y distribution. Combined-foot ground is often
+ * a few cm below a single heel, so L/R series miss real contacts on device pose.
+ */
+function groundForFootSeries(
+  ys: readonly (number | undefined)[],
+  fallback: GroundModel,
+): GroundModel {
+  const vals = ys.filter((y): y is number => y !== undefined && Number.isFinite(y));
+  if (vals.length < 6) {
+    return { ...fallback, tolerance: Math.max(fallback.tolerance, 0.045) };
+  }
+  const sorted = [...vals].sort((a, b) => a - b);
+  const ground = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.9))]!;
+  const tolerance = Math.max(fallback.tolerance, 0.035);
+  // Never require a foot to reach deeper than the combined floor.
+  return {
+    ground: Math.max(ground, fallback.ground - 0.03),
+    start: fallback.start,
+    tolerance,
+  };
+}
+
+/** Fill brief air holes so pose dropouts don't split one step into chatter. */
+function fillGroundHoles(
+  frames: readonly number[],
+  onGround: readonly boolean[],
+  maxHoleFrames = 4,
+): boolean[] {
+  const out = [...onGround];
+  let lastOn = -1;
+  for (let i = 0; i < out.length; i += 1) {
+    if (!out[i]) continue;
+    if (lastOn >= 0) {
+      const hole = frames[i]! - frames[lastOn]!;
+      if (hole > 1 && hole <= maxHoleFrames + 1) {
+        for (let k = lastOn + 1; k < i; k += 1) out[k] = true;
+      }
+    }
+    lastOn = i;
+  }
+  return out;
+}
+
 /** Contact streaks for one foot series before `beforeFrame`. */
 function contactStreaksBefore(
   frames: readonly number[],
   onGround: readonly boolean[],
   beforeFrame: number,
 ): Array<{ tdIdx: number; toIdx: number }> {
+  const filled = fillGroundHoles(frames, onGround);
   const streaks: Array<{ tdIdx: number; toIdx: number }> = [];
   let i = 0;
   while (i < frames.length) {
     if (frames[i]! >= beforeFrame) break;
-    if (!onGround[i]) {
+    if (!filled[i]) {
       i += 1;
       continue;
     }
     const tdIdx = i;
-    while (i < frames.length && frames[i]! < beforeFrame && onGround[i]) i += 1;
+    while (i < frames.length && frames[i]! < beforeFrame && filled[i]) i += 1;
     const toIdx = i - 1;
     if (toIdx >= tdIdx) streaks.push({ tdIdx, toIdx });
   }
@@ -105,7 +150,8 @@ function contactStreaksBefore(
 }
 
 /**
- * List per-foot (or combined) contact events before plant — for diagnostics.
+ * List per-foot AND combined contact events before plant — for diagnostics + detect.
+ * Always includes combined (C) so device L/R gaps still surface the step.
  */
 export function listFootContactsBeforePlant(
   samples: readonly FootSample[],
@@ -126,45 +172,45 @@ export function listFootContactsBeforePlant(
     primary: readonly (number | undefined)[],
     secondary: readonly (number | undefined)[],
   ) => {
-    const ground = primary.map((y, i) => footOnGround(y, secondary[i], model));
+    const footModel = foot === "C" ? model : groundForFootSeries(primary, model);
+    const ground = primary.map((y, i) => footOnGround(y, secondary[i], footModel));
     if (!ground.some(Boolean)) return;
     for (const streak of contactStreaksBefore(frames, ground, plantTouchdown)) {
       const td = frames[streak.tdIdx]!;
       const to = frames[streak.toIdx]!;
-      if (!(td < to)) continue;
+      if (!(td <= to)) continue;
+      // Single-frame contacts are still listed for diagnostics.
       out.push({
         foot,
         touchdown: td,
         takeoff: to,
-        contactMs: realMs(timing, td, to),
+        contactMs: td < to ? realMs(timing, td, to) : 0,
       });
     }
   };
 
   const hasLeft = ordered.some((s) => s.leftFootY !== undefined || s.leftHeelY !== undefined);
   const hasRight = ordered.some((s) => s.rightFootY !== undefined || s.rightHeelY !== undefined);
-  if (hasLeft || hasRight) {
-    if (hasLeft) {
-      pushFoot(
-        "L",
-        ordered.map((s) => s.leftHeelY ?? s.leftFootY),
-        ordered.map((s) => s.leftFootY),
-      );
-    }
-    if (hasRight) {
-      pushFoot(
-        "R",
-        ordered.map((s) => s.rightHeelY ?? s.rightFootY),
-        ordered.map((s) => s.rightFootY),
-      );
-    }
-  } else {
+  if (hasLeft) {
     pushFoot(
-      "C",
-      ordered.map((s) => s.heelY ?? s.footY),
-      ordered.map((s) => s.footY),
+      "L",
+      ordered.map((s) => s.leftHeelY ?? s.leftFootY),
+      ordered.map((s) => s.leftFootY ?? s.leftHeelY),
     );
   }
+  if (hasRight) {
+    pushFoot(
+      "R",
+      ordered.map((s) => s.rightHeelY ?? s.rightFootY),
+      ordered.map((s) => s.rightFootY ?? s.rightHeelY),
+    );
+  }
+  // Always include combined — phone L/R landmarks are often incomplete before plant.
+  pushFoot(
+    "C",
+    ordered.map((s) => s.heelY ?? s.footY),
+    ordered.map((s) => s.footY),
+  );
 
   return out.sort((a, b) => a.takeoff - b.takeoff || a.touchdown - b.touchdown);
 }
@@ -193,7 +239,11 @@ export function detectPenultimateDetailed(
 
   const events = listFootContactsBeforePlant(samples, plantTouchdown, timing);
   if (!events.length) {
-    return { marks: null, lowConfidence: true, reason: "no per-foot contacts before plant" };
+    return {
+      marks: null,
+      lowConfidence: true,
+      reason: `no per-foot contacts before plant (samples ${ordered.length})`,
+    };
   }
 
   let plantIdx = ordered.findIndex((s) => s.frame >= plantTouchdown);
@@ -206,6 +256,15 @@ export function detectPenultimateDetailed(
   if (plantRight) plantFeet.add("R");
   if (!plantFeet.size) plantFeet.add("C");
 
+  const estimateMs = (start: number, end: number): number | null => {
+    const timed = realMs(timing, start, end);
+    if (timed !== null) return timed;
+    if (timing && timing.fps > 0 && end > start) {
+      return ((end - start) / timing.fps / (timing.stretch ?? 1)) * 1000;
+    }
+    return null;
+  };
+
   type Ranked = PenultimateMarks & {
     contactMs: number;
     gapMs: number;
@@ -214,19 +273,28 @@ export function detectPenultimateDetailed(
   };
   const ranked: Ranked[] = [];
   for (const ev of events) {
-    if (!(ev.takeoff < plantTouchdown && ev.touchdown < ev.takeoff)) continue;
-    const contactMs = ev.contactMs ?? realMs(timing, ev.touchdown, ev.takeoff);
-    const gapMs = realMs(timing, ev.takeoff, plantTouchdown);
+    // Penultimate must end before plant TD (separate step).
+    if (!(ev.takeoff < plantTouchdown && ev.touchdown <= ev.takeoff)) continue;
+    const contactMs =
+      ev.touchdown < ev.takeoff
+        ? (ev.contactMs ?? estimateMs(ev.touchdown, ev.takeoff))
+        : 0;
+    const gapMs = estimateMs(ev.takeoff, plantTouchdown);
     if (contactMs === null || gapMs === null) continue;
-    // Reject only 1–2 frame spikes; duration soft-gates handled below.
-    if (ev.takeoff - ev.touchdown < 2) continue;
+    // Ignore tiny pose blinks (allow 1-frame listed contacts only in diagnostics).
+    if (ev.takeoff - ev.touchdown < 1) continue;
 
     const hardOk = contactMs >= MIN_PEN_CONTACT_MS && gapMs >= MIN_STEP_GAP_MS;
-    let score = contactMs + gapMs * 0.5;
+    let score = contactMs + gapMs * 0.35;
+    // Prefer the last step before plant (closest takeoff).
+    score += ev.takeoff * 0.05;
+    // Prefer a clear airborne gap into plant.
+    if (gapMs >= MIN_STEP_GAP_MS) score += 80;
     // Either foot ok; slight preference for opposite of sole plant foot.
     if (ev.foot !== "C" && plantFeet.size === 1 && !plantFeet.has(ev.foot)) score += 120;
     if (ev.foot !== "C" && plantFeet.size === 2) score += 40;
-    score += ev.takeoff * 0.01;
+    // Prefer L/R over combined when both exist.
+    if (ev.foot !== "C") score += 30;
     if (hardOk) score += 500;
     ranked.push({
       touchdown: ev.touchdown,
@@ -239,7 +307,11 @@ export function detectPenultimateDetailed(
     });
   }
   if (!ranked.length) {
-    return { marks: null, lowConfidence: true, reason: "no ranked penultimate candidate" };
+    return {
+      marks: null,
+      lowConfidence: true,
+      reason: `no ranked penultimate candidate (${events.length} contacts listed)`,
+    };
   }
   ranked.sort((a, b) => b.score - a.score || b.takeoff - a.takeoff);
   const best = ranked[0]!;
@@ -504,10 +576,18 @@ export function approachPlausibilityWarnings(input: {
 }
 
 /** Format per-foot contacts for the diagnostics panel. */
-export function formatFootContactNotes(events: readonly FootContactEvent[]): string[] {
-  if (!events.length) return ["Per-foot contacts before plant: none"];
-  const lines = ["Per-foot contacts before plant:"];
-  for (const ev of events.slice(-12)) {
+export function formatFootContactNotes(
+  events: readonly FootContactEvent[],
+  sampleCount?: number,
+): string[] {
+  const head =
+    sampleCount !== undefined
+      ? `Per-foot contacts before plant (${events.length} events, ${sampleCount} pose samples):`
+      : `Per-foot contacts before plant (${events.length} events):`;
+  if (!events.length) return [`${head} none`];
+  const lines = [head];
+  // Show the last contacts (closest to plant) — most relevant for penultimate.
+  for (const ev of events.slice(-16)) {
     const ms = ev.contactMs === null ? "?" : `${ev.contactMs.toFixed(0)} ms`;
     lines.push(`  ${ev.foot} TD${ev.touchdown} TO${ev.takeoff} (${ms})`);
   }

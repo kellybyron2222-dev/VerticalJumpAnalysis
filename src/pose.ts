@@ -651,15 +651,29 @@ export async function analyzeMultiClip(
   }
 
   // Dense-enough XY samples along the main flight for the foot-path overlay.
+  // Approach: also densify ~160 frames before plant so penultimate contacts
+  // are not lost when the coarse scan stepped over the prior step.
   let pathSamples = merged;
   const main = resolved.jumps[0];
   if (main) {
+    const already = new Set(merged.map((s) => s.frame));
+    const pathFrames: number[] = [];
+    if (!requireDrop) {
+      const preStart = Math.max(0, main.touchdown - 160);
+      for (let f = preStart; f < main.touchdown; f += 1) {
+        if (!already.has(f)) pathFrames.push(f);
+      }
+    }
     const flightSpan = main.landing - main.takeoff;
     const pathStep = flightSpan > 120 ? 3 : flightSpan > 60 ? 2 : 1;
-    const pathFrames: number[] = [];
-    for (let f = main.takeoff; f <= main.landing; f += pathStep) pathFrames.push(f);
-    if (pathFrames[pathFrames.length - 1] !== main.landing) pathFrames.push(main.landing);
-    if (pathFrames.length > 2) {
+    for (let f = main.takeoff; f <= main.landing; f += pathStep) {
+      if (!already.has(f)) pathFrames.push(f);
+    }
+    if (!already.has(main.landing) && !pathFrames.includes(main.landing)) {
+      pathFrames.push(main.landing);
+    }
+    pathFrames.sort((a, b) => a - b);
+    if (pathFrames.length > 0) {
       onProgress(`Foot path ${pathFrames.length} frames…`, 0.96);
       const pathPass = await sampleFrames(
         landmarker,

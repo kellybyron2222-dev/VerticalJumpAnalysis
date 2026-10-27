@@ -125,6 +125,57 @@ describe("penultimate detect", () => {
     expect(events.some((e) => e.foot === "L" && e.takeoff - e.touchdown >= 20)).toBe(true);
   });
 
+  it("finds device-like R66–92 when right heel sits above combined plant floor", () => {
+    // Phone heavy: plant left reaches ~0.96; penultimate right heel only ~0.91.
+    // Combined ground≈0.95 would miss R if L/R reused that floor.
+    const playback = 171.2 / 4;
+    const timing = { fps: 171.2, stretch: 4, frameTimes: pts(400, playback) };
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame <= 320; frame += 1) {
+      let left = 0.72;
+      let right = 0.72;
+      if (frame >= 66 && frame <= 92) right = 0.91;
+      if (frame > 92 && frame < 109) {
+        left = 0.68;
+        right = 0.68;
+      }
+      if (frame >= 109 && frame <= 162) {
+        left = 0.96;
+        if (frame >= 120) right = 0.94;
+      }
+      if (frame >= 163 && frame < 287) {
+        left = 0.5;
+        right = 0.5;
+      }
+      if (frame >= 287) {
+        left = 0.93;
+        right = 0.93;
+      }
+      samples.push({
+        frame,
+        footY: Math.max(left, right),
+        heelY: Math.max(left, right),
+        leftFootY: left,
+        rightFootY: right,
+        leftHeelY: left,
+        rightHeelY: right,
+      });
+    }
+    const events = listFootContactsBeforePlant(samples, 109, timing);
+    // Combined floor misses shallow R; per-foot ground must still list it.
+    expect(events.some((e) => e.foot === "R" && e.touchdown <= 70 && e.takeoff >= 88)).toBe(
+      true,
+    );
+    const pen = detectPenultimateDetailed(samples, 109, timing);
+    expect(pen.marks).not.toBeNull();
+    expect(pen.marks!.foot).toBe("R");
+    expect(pen.marks!.touchdown).toBeGreaterThanOrEqual(64);
+    expect(pen.marks!.touchdown).toBeLessThanOrEqual(70);
+    expect(pen.marks!.takeoff).toBeGreaterThanOrEqual(88);
+    expect(pen.marks!.takeoff).toBeLessThan(109);
+    expect(pen.lowConfidence).toBe(false);
+  });
+
   it("refines plant TD to plant-foot first hit, not earlier other-foot", () => {
     // Other foot early then leaves; plant foot hits at 110; TO at 150 (~167 ms @240fps).
     const samples: FootSample[] = [];

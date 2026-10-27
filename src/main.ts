@@ -1721,7 +1721,9 @@ function applyResolvedJumps(
         events.touchdown,
         approachTiming,
       );
-      approachNotes.push(...formatFootContactNotes(footEvents));
+      approachNotes.push(
+        ...formatFootContactNotes(footEvents, poseSamples.length),
+      );
       approachNotes.push(
         `Plant frames used: TD${events.touchdown} TO${events.takeoff} LD${events.landing}`,
       );
