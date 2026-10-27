@@ -241,6 +241,18 @@ export function sampleFromLandmarks(
   const rightY = lowestPoint(landmarks, RIGHT_ANKLE_HEEL, MIN_VISIBILITY);
   if (leftY !== null) sample.leftFootY = leftY;
   if (rightY !== null) sample.rightFootY = rightY;
+  const leftHeel = landmarks[29];
+  const rightHeel = landmarks[30];
+  if (leftHeel && (leftHeel.visibility ?? 1) >= MIN_VISIBILITY) {
+    sample.leftHeelX = leftHeel.x;
+    sample.leftHeelY = leftHeel.y;
+  }
+  if (rightHeel && (rightHeel.visibility ?? 1) >= MIN_VISIBILITY) {
+    sample.rightHeelX = rightHeel.x;
+    sample.rightHeelY = rightHeel.y;
+  }
+  const heelVis = meanVisibility(landmarks, HEELS);
+  if (heelVis !== null) sample.heelVis = heelVis;
   if (hip !== null) sample.hipY = hip;
   const heel = contactHeelXY(landmarks, contactX);
   if (heel) {

@@ -96,6 +96,141 @@ export function heelPathDuringFlight(
   return [...byFrame.values()].sort((a, b) => a.frame - b.frame);
 }
 
+const APPROACH_TRAIL_PAD = 8;
+const APPROACH_MIN_HEEL_VIS = 0.15;
+/** Max normalized step between consecutive trail points (rejects foot-switch outliers). */
+const APPROACH_MAX_STEP = 0.07;
+const APPROACH_MEDIAN_WIN = 5;
+
+function heelSideXY(
+  sample: FootSample,
+  side: "L" | "R",
+): { x: number; y: number } | null {
+  if (side === "L") {
+    if (
+      sample.leftHeelX !== undefined &&
+      sample.leftHeelY !== undefined &&
+      Number.isFinite(sample.leftHeelX) &&
+      Number.isFinite(sample.leftHeelY)
+    ) {
+      return { x: sample.leftHeelX, y: sample.leftHeelY };
+    }
+    return null;
+  }
+  if (
+    sample.rightHeelX !== undefined &&
+    sample.rightHeelY !== undefined &&
+    Number.isFinite(sample.rightHeelX) &&
+    Number.isFinite(sample.rightHeelY)
+  ) {
+    return { x: sample.rightHeelX, y: sample.rightHeelY };
+  }
+  return null;
+}
+
+function pickPlantHeelSide(samples: readonly FootSample[], takeoff: number): "L" | "R" | null {
+  let best: { side: "L" | "R"; y: number } | null = null;
+  for (const sample of samples) {
+    if (sample.frame < takeoff - 4 || sample.frame > takeoff + 2) continue;
+    for (const side of ["L", "R"] as const) {
+      const xy = heelSideXY(sample, side);
+      if (!xy) continue;
+      if (!best || xy.y > best.y) best = { side, y: xy.y };
+    }
+  }
+  return best?.side ?? null;
+}
+
+function movingMedianXY(points: readonly FootPoint[], window: number): FootPoint[] {
+  if (points.length <= 2 || window < 3) return [...points];
+  const half = Math.floor(window / 2);
+  const out: FootPoint[] = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const from = Math.max(0, i - half);
+    const to = Math.min(points.length, i + half + 1);
+    const xs = points.slice(from, to).map((p) => p.x).sort((a, b) => a - b);
+    const ys = points.slice(from, to).map((p) => p.y).sort((a, b) => a - b);
+    const mid = Math.floor(xs.length / 2);
+    out.push({
+      frame: points[i]!.frame,
+      x: xs.length % 2 ? xs[mid]! : (xs[mid - 1]! + xs[mid]!) / 2,
+      y: ys.length % 2 ? ys[mid]! : (ys[mid - 1]! + ys[mid]!) / 2,
+    });
+  }
+  return out;
+}
+
+/**
+ * Approach trail: lock to plant/takeoff heel (or nearest heel to prior point),
+ * drop low-vis / velocity outliers, median-smooth, draw from shortly before
+ * plant TD through landing. Build-s magenta/cyan palette unchanged.
+ */
+export function heelPathForApproach(
+  samples: readonly FootSample[],
+  plantTouchdown: number | null,
+  takeoff: number,
+  landing: number,
+): FootPoint[] {
+  if (!(takeoff < landing)) return [];
+  const start = Math.max(
+    0,
+    plantTouchdown !== null && plantTouchdown >= 0
+      ? plantTouchdown - APPROACH_TRAIL_PAD
+      : takeoff - APPROACH_TRAIL_PAD,
+  );
+  const locked = pickPlantHeelSide(samples, takeoff);
+  const ordered = [...samples]
+    .filter((s) => s.frame >= start && s.frame <= landing)
+    .sort((a, b) => a.frame - b.frame);
+
+  const raw: FootPoint[] = [];
+  let prev: FootPoint | null = null;
+  for (const sample of ordered) {
+    if (sample.heelVis !== undefined && sample.heelVis < APPROACH_MIN_HEEL_VIS) continue;
+
+    let xy: { x: number; y: number } | null = null;
+    if (locked) xy = heelSideXY(sample, locked);
+    if (!xy) {
+      const left = heelSideXY(sample, "L");
+      const right = heelSideXY(sample, "R");
+      if (left && right && prev) {
+        const dL = Math.hypot(left.x - prev.x, left.y - prev.y);
+        const dR = Math.hypot(right.x - prev.x, right.y - prev.y);
+        xy = dL <= dR ? left : right;
+      } else {
+        xy = left ?? right;
+      }
+    }
+    if (!xy) {
+      if (
+        sample.heelX !== undefined &&
+        sample.heelY !== undefined &&
+        Number.isFinite(sample.heelX) &&
+        Number.isFinite(sample.heelY)
+      ) {
+        xy = { x: sample.heelX, y: sample.heelY };
+      } else if (
+        sample.footX !== undefined &&
+        Number.isFinite(sample.footX) &&
+        Number.isFinite(sample.footY)
+      ) {
+        xy = { x: sample.footX, y: sample.footY };
+      }
+    }
+    if (!xy) continue;
+
+    const point: FootPoint = { frame: sample.frame, x: xy.x, y: xy.y };
+    if (prev) {
+      const step = Math.hypot(point.x - prev.x, point.y - prev.y);
+      const frameGap = Math.max(1, point.frame - prev.frame);
+      if (step / frameGap > APPROACH_MAX_STEP) continue; // outlier / foot switch
+    }
+    raw.push(point);
+    prev = point;
+  }
+  return movingMedianXY(raw, APPROACH_MEDIAN_WIN);
+}
+
 /**
  * Floor = lowest heel/foot (largest Y) in a short window ending at takeoff.
  */
@@ -142,8 +277,11 @@ export function buildJumpOverlayModel(
   takeoff: number,
   landing: number,
   heightIn: number,
+  options: { approach?: boolean; plantTouchdown?: number | null } = {},
 ): JumpOverlayModel | null {
-  const heelPath = heelPathDuringFlight(samples, takeoff, landing);
+  const heelPath = options.approach
+    ? heelPathForApproach(samples, options.plantTouchdown ?? null, takeoff, landing)
+    : heelPathDuringFlight(samples, takeoff, landing);
   const heelApex = findFlightApex(heelPath);
   if (!heelApex) return null;
 

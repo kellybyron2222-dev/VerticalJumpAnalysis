@@ -11,6 +11,7 @@ import {
   floorLevelNearTakeoff,
   heelAtFrame,
   heelPathDuringFlight,
+  heelPathForApproach,
   heelTrailThrough,
   metricsStripRect,
   parseExportPlaybackSpeed,
@@ -77,6 +78,39 @@ describe("jumpOverlay heel trail", () => {
     expect(OVERLAY.heelDotOutline.toLowerCase()).toBe("#ffffff");
     expect(OVERLAY.trailOpacityMax).toBeLessThanOrEqual(0.4);
     expect(OVERLAY.trailOpacityMax).toBeGreaterThanOrEqual(0.35);
+  });
+
+  it("approach trail locks to one heel and rejects foot-switch outliers", () => {
+    const zigzag: FootSample[] = [];
+    for (let frame = 90; frame <= 140; frame += 1) {
+      // Smooth right-heel plant path…
+      const t = (frame - 100) / 40;
+      const ry = 0.9 - 0.35 * 4 * Math.max(0, Math.min(1, t)) * (1 - Math.max(0, Math.min(1, t)));
+      const rx = 0.55 + t * 0.02;
+      // …plus left-heel outliers across the frame
+      zigzag.push({
+        frame,
+        footY: ry,
+        footX: rx,
+        heelY: ry,
+        heelX: rx,
+        rightHeelX: rx,
+        rightHeelY: ry,
+        leftHeelX: frame % 5 === 0 ? 0.15 : 0.52,
+        leftHeelY: frame % 5 === 0 ? 0.4 : ry,
+        heelVis: 0.8,
+      });
+    }
+    const path = heelPathForApproach(zigzag, 100, 110, 140);
+    expect(path.length).toBeGreaterThan(8);
+    const xs = path.map((p) => p.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeLessThan(0.2);
+    const model = buildJumpOverlayModel(zigzag, 110, 140, 25, {
+      approach: true,
+      plantTouchdown: 100,
+    });
+    expect(model).not.toBeNull();
+    expect(model!.heelPath[0]!.frame).toBeGreaterThanOrEqual(90);
   });
 });
 

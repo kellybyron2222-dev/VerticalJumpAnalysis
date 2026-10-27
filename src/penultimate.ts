@@ -26,14 +26,23 @@ export interface ApproachTiming {
   frameTimes?: readonly number[];
 }
 
-/** Hard gates: shorter than this → treat as not found (foot chatter). */
-export const MIN_PEN_CONTACT_MS = 80;
-export const MIN_STEP_GAP_MS = 60;
+/**
+ * Hard rejection floor (foot chatter). Soft Check-marks bands stay stricter.
+ * Below hard floor → still return best candidate as lowConfidence when possible.
+ */
+export const MIN_PEN_CONTACT_MS = 50;
+export const MIN_STEP_GAP_MS = 30;
 /** Soft Check-marks bands (shown when marks exist but look off). */
 export const PEN_CONTACT_SOFT_MIN_MS = 80;
 export const PEN_CONTACT_SOFT_MAX_MS = 300;
 export const STEP_GAP_SOFT_MIN_MS = 60;
 export const STEP_GAP_SOFT_MAX_MS = 400;
+
+export interface PenultimateDetectResult {
+  marks: PenultimateMarks | null;
+  lowConfidence: boolean;
+  reason: string;
+}
 
 function orderedSamples(samples: readonly FootSample[]): FootSample[] {
   const byFrame = new Map<number, FootSample>();
@@ -62,6 +71,15 @@ function realMs(
 
 function onGroundY(y: number | undefined, model: GroundModel): boolean {
   return y !== undefined && Number.isFinite(y) && y >= model.ground - model.tolerance;
+}
+
+/** Heel-OR-toe: either landmark near ground counts as contact. */
+function footOnGround(
+  heelOrToeY: number | undefined,
+  altY: number | undefined,
+  model: GroundModel,
+): boolean {
+  return onGroundY(heelOrToeY, model) || onGroundY(altY, model);
 }
 
 /** Contact streaks for one foot series before `beforeFrame`. */
@@ -103,8 +121,12 @@ export function listFootContactsBeforePlant(
   const frames = ordered.map((s) => s.frame);
   const out: FootContactEvent[] = [];
 
-  const pushFoot = (foot: "L" | "R" | "C", ys: readonly (number | undefined)[]) => {
-    const ground = ys.map((y) => onGroundY(y, model));
+  const pushFoot = (
+    foot: "L" | "R" | "C",
+    primary: readonly (number | undefined)[],
+    secondary: readonly (number | undefined)[],
+  ) => {
+    const ground = primary.map((y, i) => footOnGround(y, secondary[i], model));
     if (!ground.some(Boolean)) return;
     for (const streak of contactStreaksBefore(frames, ground, plantTouchdown)) {
       const td = frames[streak.tdIdx]!;
@@ -119,20 +141,27 @@ export function listFootContactsBeforePlant(
     }
   };
 
-  const hasLeft = ordered.some((s) => s.leftFootY !== undefined);
-  const hasRight = ordered.some((s) => s.rightFootY !== undefined);
+  const hasLeft = ordered.some((s) => s.leftFootY !== undefined || s.leftHeelY !== undefined);
+  const hasRight = ordered.some((s) => s.rightFootY !== undefined || s.rightHeelY !== undefined);
   if (hasLeft || hasRight) {
-    if (hasLeft) pushFoot(
-      "L",
-      ordered.map((s) => s.leftFootY),
-    );
-    if (hasRight) pushFoot(
-      "R",
-      ordered.map((s) => s.rightFootY),
-    );
+    if (hasLeft) {
+      pushFoot(
+        "L",
+        ordered.map((s) => s.leftHeelY ?? s.leftFootY),
+        ordered.map((s) => s.leftFootY),
+      );
+    }
+    if (hasRight) {
+      pushFoot(
+        "R",
+        ordered.map((s) => s.rightHeelY ?? s.rightFootY),
+        ordered.map((s) => s.rightFootY),
+      );
+    }
   } else {
     pushFoot(
       "C",
+      ordered.map((s) => s.heelY ?? s.footY),
       ordered.map((s) => s.footY),
     );
   }
@@ -142,53 +171,63 @@ export function listFootContactsBeforePlant(
 
 /**
  * Find the contact cycle immediately before plant touchdown.
- * Prefers a single foot (opposite the plant side when separable).
- * Returns null when chatter / wrong-foot / duration gates fail — caller must not invent numbers.
+ * Either foot allowed; heel-OR-toe ground. Hard floor 50/30 ms — below that
+ * still returns the best candidate as lowConfidence so Byron can review.
  */
-export function detectPenultimate(
+export function detectPenultimateDetailed(
   samples: readonly FootSample[],
   plantTouchdown: number,
   timing?: ApproachTiming,
-): PenultimateMarks | null {
-  if (!(plantTouchdown > 0)) return null;
+): PenultimateDetectResult {
+  if (!(plantTouchdown > 0)) {
+    return { marks: null, lowConfidence: true, reason: "no plant touchdown" };
+  }
   const ordered = orderedSamples(samples);
-  if (ordered.length < 8) return null;
+  if (ordered.length < 8) {
+    return { marks: null, lowConfidence: true, reason: "too few samples" };
+  }
   const model = groundModel(ordered);
-  if (!model) return null;
+  if (!model) {
+    return { marks: null, lowConfidence: true, reason: "no ground model" };
+  }
 
   const events = listFootContactsBeforePlant(samples, plantTouchdown, timing);
-  if (!events.length) return null;
+  if (!events.length) {
+    return { marks: null, lowConfidence: true, reason: "no per-foot contacts before plant" };
+  }
 
-  // Plant-side feet at plant TD (±1 sample).
   let plantIdx = ordered.findIndex((s) => s.frame >= plantTouchdown);
   if (plantIdx < 0) plantIdx = ordered.length - 1;
   const plantSample = ordered[plantIdx]!;
-  const plantLeft = onGroundY(plantSample.leftFootY, model);
-  const plantRight = onGroundY(plantSample.rightFootY, model);
+  const plantLeft = footOnGround(plantSample.leftHeelY, plantSample.leftFootY, model);
+  const plantRight = footOnGround(plantSample.rightHeelY, plantSample.rightFootY, model);
   const plantFeet = new Set<"L" | "R" | "C">();
   if (plantLeft) plantFeet.add("L");
   if (plantRight) plantFeet.add("R");
   if (!plantFeet.size) plantFeet.add("C");
 
-  // Candidates: end before plant, pass hard duration gates, prefer opposite foot.
-  type Ranked = PenultimateMarks & { contactMs: number; gapMs: number; score: number };
+  type Ranked = PenultimateMarks & {
+    contactMs: number;
+    gapMs: number;
+    score: number;
+    hardOk: boolean;
+  };
   const ranked: Ranked[] = [];
   for (const ev of events) {
     if (!(ev.takeoff < plantTouchdown && ev.touchdown < ev.takeoff)) continue;
     const contactMs = ev.contactMs ?? realMs(timing, ev.touchdown, ev.takeoff);
     const gapMs = realMs(timing, ev.takeoff, plantTouchdown);
     if (contactMs === null || gapMs === null) continue;
-    // Hard gates — foot chatter / wrong-foot blinks.
-    if (contactMs < MIN_PEN_CONTACT_MS || gapMs < MIN_STEP_GAP_MS) continue;
-    // Need a few frames of contact, not 1–2 sample spikes.
-    if (ev.takeoff - ev.touchdown < 3) continue;
+    // Reject only 1–2 frame spikes; duration soft-gates handled below.
+    if (ev.takeoff - ev.touchdown < 2) continue;
 
+    const hardOk = contactMs >= MIN_PEN_CONTACT_MS && gapMs >= MIN_STEP_GAP_MS;
     let score = contactMs + gapMs * 0.5;
-    // Prefer the foot that is not the only plant foot (penultimate ≠ plant).
-    if (ev.foot !== "C" && plantFeet.size === 1 && !plantFeet.has(ev.foot)) score += 200;
-    if (ev.foot !== "C" && plantFeet.size === 2) score += 80; // bilateral plant — either single foot ok
-    // Prefer the last contact before plant (closest takeoff).
+    // Either foot ok; slight preference for opposite of sole plant foot.
+    if (ev.foot !== "C" && plantFeet.size === 1 && !plantFeet.has(ev.foot)) score += 120;
+    if (ev.foot !== "C" && plantFeet.size === 2) score += 40;
     score += ev.takeoff * 0.01;
+    if (hardOk) score += 500;
     ranked.push({
       touchdown: ev.touchdown,
       takeoff: ev.takeoff,
@@ -196,12 +235,136 @@ export function detectPenultimate(
       contactMs,
       gapMs,
       score,
+      hardOk,
     });
   }
-  if (!ranked.length) return null;
+  if (!ranked.length) {
+    return { marks: null, lowConfidence: true, reason: "no ranked penultimate candidate" };
+  }
   ranked.sort((a, b) => b.score - a.score || b.takeoff - a.takeoff);
   const best = ranked[0]!;
-  return { touchdown: best.touchdown, takeoff: best.takeoff, foot: best.foot };
+  const marks = { touchdown: best.touchdown, takeoff: best.takeoff, foot: best.foot };
+  if (best.hardOk) {
+    return {
+      marks,
+      lowConfidence: false,
+      reason: `penultimate ${best.foot} TD${best.touchdown} TO${best.takeoff}`,
+    };
+  }
+  return {
+    marks,
+    lowConfidence: true,
+    reason:
+      `low-confidence penultimate ${best.foot} TD${best.touchdown} TO${best.takeoff}` +
+      ` (contact ${best.contactMs.toFixed(0)} ms, gap ${best.gapMs.toFixed(0)} ms) — verify marks`,
+  };
+}
+
+/** Convenience wrapper — marks only (null when nothing plausible). */
+export function detectPenultimate(
+  samples: readonly FootSample[],
+  plantTouchdown: number,
+  timing?: ApproachTiming,
+): PenultimateMarks | null {
+  return detectPenultimateDetailed(samples, plantTouchdown, timing).marks;
+}
+
+/**
+ * Plant TD = when the plant foot first hits in the last contact before takeoff.
+ * If the other foot was already down earlier, use the later first-hit (not that
+ * earlier contact). Logs the reason for diagnostics.
+ */
+export function refineApproachPlantTouchdown(
+  samples: readonly FootSample[],
+  takeoff: number,
+  proposedTd: number,
+): { touchdown: number; reason: string } {
+  const ordered = orderedSamples(samples);
+  if (ordered.length < 4 || !(takeoff > 0)) {
+    return { touchdown: proposedTd, reason: "plant TD unchanged (insufficient samples)" };
+  }
+  const model = groundModel(ordered);
+  if (!model) {
+    return { touchdown: proposedTd, reason: "plant TD unchanged (no ground model)" };
+  }
+
+  let toIdx = ordered.findIndex((s) => s.frame >= takeoff);
+  if (toIdx < 0) toIdx = ordered.length - 1;
+
+  const downAt = (
+    s: (typeof ordered)[number],
+    foot: "L" | "R" | "C",
+  ): boolean => {
+    if (foot === "L") return footOnGround(s.leftHeelY, s.leftFootY, model);
+    if (foot === "R") return footOnGround(s.rightHeelY, s.rightFootY, model);
+    return (
+      footOnGround(s.heelY, s.footY, model) ||
+      footOnGround(s.leftHeelY, s.leftFootY, model) ||
+      footOnGround(s.rightHeelY, s.rightFootY, model)
+    );
+  };
+
+  /** Start frame of the contact streak of `foot` that reaches just before takeoff. */
+  const streakStart = (foot: "L" | "R" | "C"): number | null => {
+    let i = toIdx - 1;
+    while (i >= 0 && !downAt(ordered[i]!, foot)) i -= 1;
+    if (i < 0) return null;
+    while (i >= 0 && downAt(ordered[i]!, foot)) i -= 1;
+    return ordered[i + 1]!.frame;
+  };
+
+  const hasLR = ordered.some(
+    (s) =>
+      s.leftFootY !== undefined ||
+      s.leftHeelY !== undefined ||
+      s.rightFootY !== undefined ||
+      s.rightHeelY !== undefined,
+  );
+
+  let refined = proposedTd;
+  let plantFoot: "L" | "R" | "C" = "C";
+  if (hasLR) {
+    const leftStart = streakStart("L");
+    const rightStart = streakStart("R");
+    // Prefer the later first-hit among feet still down before TO (plant foot).
+    if (leftStart !== null && rightStart !== null) {
+      if (leftStart >= rightStart) {
+        refined = leftStart;
+        plantFoot = "L";
+      } else {
+        refined = rightStart;
+        plantFoot = "R";
+      }
+    } else if (leftStart !== null) {
+      refined = leftStart;
+      plantFoot = "L";
+    } else if (rightStart !== null) {
+      refined = rightStart;
+      plantFoot = "R";
+    } else {
+      const combined = streakStart("C");
+      if (combined !== null) refined = combined;
+    }
+  } else {
+    const combined = streakStart("C");
+    if (combined !== null) refined = combined;
+  }
+
+  if (!(refined < takeoff)) {
+    return { touchdown: proposedTd, reason: "plant TD unchanged (refined invalid)" };
+  }
+  if (refined === proposedTd) {
+    return {
+      touchdown: proposedTd,
+      reason: `plant TD${proposedTd} = ${plantFoot} first hit before TO${takeoff}`,
+    };
+  }
+  return {
+    touchdown: refined,
+    reason:
+      `plant TD refined ${proposedTd}→${refined} (${plantFoot} first hit before TO${takeoff};` +
+      ` not earlier other-foot contact)`,
+  };
 }
 
 /** Penultimate contact and step gap (pen TO → plant TD), real time. */

@@ -79,11 +79,12 @@ import {
 import {
   approachExtraMetrics,
   approachPlausibilityWarnings,
-  detectPenultimate,
+  detectPenultimateDetailed,
   formatFootContactNotes,
   listFootContactsBeforePlant,
   plantContactOutOfBand,
   penultimateContactOutOfBand,
+  refineApproachPlantTouchdown,
   stepGapOutOfBand,
 } from "./penultimate.ts";
 import {
@@ -1692,10 +1693,8 @@ function applyResolvedJumps(
   setCheckMarksFlag(checkNotes.length > 0, checkNotes[0] ?? "");
   const warnSuffix = checkNotes.length ? ` ${checkNotes.join(" ")}` : "";
   if (jumps.length === 1) {
-    // Approach penultimate notes may append more Check marks below.
-    const events = jumps[0]!;
+    const events = { ...jumps[0]! };
     marks.stepOff = events.stepOff;
-    marks.touchdown = events.touchdown;
     marks.takeoff = events.takeoff;
     marks.landing = events.landing;
     const approachTiming = {
@@ -1704,21 +1703,38 @@ function applyResolvedJumps(
       frameTimes: frameTimes ?? undefined,
     };
     let approachNotes: string[] = [];
-    if (jumpType === "penultimate" || jumpType === "oneStep") {
+    const approach = jumpType === "penultimate" || jumpType === "oneStep";
+    if (approach) {
+      const refined = refineApproachPlantTouchdown(
+        poseSamples,
+        events.takeoff,
+        events.touchdown,
+      );
+      approachNotes.push(refined.reason);
+      events.touchdown = refined.touchdown;
+    }
+    marks.touchdown = events.touchdown;
+    if (approach) {
       const footEvents = listFootContactsBeforePlant(
         poseSamples,
         events.touchdown,
         approachTiming,
       );
-      approachNotes = formatFootContactNotes(footEvents);
+      approachNotes.push(...formatFootContactNotes(footEvents));
       approachNotes.push(
         `Plant frames used: TD${events.touchdown} TO${events.takeoff} LD${events.landing}`,
       );
     }
     if (jumpType === "penultimate") {
-      const pen = detectPenultimate(poseSamples, events.touchdown, approachTiming);
+      const penResult = detectPenultimateDetailed(
+        poseSamples,
+        events.touchdown,
+        approachTiming,
+      );
+      const pen = penResult.marks;
       marks.penTouchdown = pen?.touchdown ?? null;
       marks.penTakeoff = pen?.takeoff ?? null;
+      approachNotes.push(penResult.reason);
       const extra = approachExtraMetrics({
         plantTouchdown: events.touchdown,
         penultimateTouchdown: marks.penTouchdown,
@@ -1743,13 +1759,14 @@ function applyResolvedJumps(
         largestFlightMs,
         penultimateFound: pen !== null,
       });
+      if (penResult.lowConfidence && pen) {
+        approachWarn.unshift(`Check marks: ${penResult.reason}. Verify penultimate TD/TO.`);
+      }
       approachNotes.push(...approachWarn);
-      if (pen) {
+      if (pen && extra.penultimateGctMs != null) {
         approachNotes.push(
           `Penultimate ${pen.foot} TD${pen.touchdown} TO${pen.takeoff}` +
-            (extra.penultimateGctMs != null
-              ? ` · contact ${extra.penultimateGctMs.toFixed(0)} ms · gap ${extra.stepGapMs?.toFixed(0) ?? "—"} ms`
-              : ""),
+            ` · contact ${extra.penultimateGctMs.toFixed(0)} ms · gap ${extra.stepGapMs?.toFixed(0) ?? "—"} ms`,
         );
       }
       if (approachWarn.length) {
@@ -2207,11 +2224,16 @@ function refreshJumpOverlay(): void {
   ) {
     jumpOverlay = null;
   } else {
+    const jumpTypeNow = parseJumpType(selectedValue("jumpType"));
     jumpOverlay = buildJumpOverlayModel(
       poseSamples,
       marks.takeoff,
       marks.landing,
       preview.heightIn,
+      {
+        approach: isApproachJumpType(jumpTypeNow),
+        plantTouchdown: marks.touchdown,
+      },
     );
   }
   overlayTools.hidden = !jumpOverlay;

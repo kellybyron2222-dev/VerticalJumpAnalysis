@@ -23,6 +23,14 @@ export interface FootSample {
   leftFootY?: number;
   /** Right ankle/heel lowest Y (0–1), when that foot is visible. */
   rightFootY?: number;
+  /** Left heel landmark XY when visible (trail lock). */
+  leftHeelX?: number;
+  leftHeelY?: number;
+  /** Right heel landmark XY when visible (trail lock). */
+  rightHeelX?: number;
+  rightHeelY?: number;
+  /** Mean heel visibility 0–1 when known — trail rejects low-vis samples. */
+  heelVis?: number;
   /** Mid-hip Y when available (larger = lower in frame). */
   hipY?: number;
   /** Contact-side heel landmark X (0–1), when known — height annotation. */
@@ -101,6 +109,26 @@ function sortedSamples(samples: readonly FootSample[]): FootSample[] {
           sample.rightFootY !== undefined && Number.isFinite(sample.rightFootY)
             ? sample.rightFootY
             : prev?.rightFootY,
+        leftHeelX:
+          sample.leftHeelX !== undefined && Number.isFinite(sample.leftHeelX)
+            ? sample.leftHeelX
+            : prev?.leftHeelX,
+        leftHeelY:
+          sample.leftHeelY !== undefined && Number.isFinite(sample.leftHeelY)
+            ? sample.leftHeelY
+            : prev?.leftHeelY,
+        rightHeelX:
+          sample.rightHeelX !== undefined && Number.isFinite(sample.rightHeelX)
+            ? sample.rightHeelX
+            : prev?.rightHeelX,
+        rightHeelY:
+          sample.rightHeelY !== undefined && Number.isFinite(sample.rightHeelY)
+            ? sample.rightHeelY
+            : prev?.rightHeelY,
+        heelVis:
+          sample.heelVis !== undefined && Number.isFinite(sample.heelVis)
+            ? sample.heelVis
+            : prev?.heelVis,
         hipY: sample.hipY !== undefined && Number.isFinite(sample.hipY) ? sample.hipY : prev?.hipY,
         heelX:
           sample.heelX !== undefined && Number.isFinite(sample.heelX) ? sample.heelX : prev?.heelX,
