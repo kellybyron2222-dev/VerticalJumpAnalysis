@@ -126,6 +126,28 @@ describe("sanityWarnings", () => {
       true,
     );
   });
+
+  it("never warns about box free-fall for approach jumps", () => {
+    expect(
+      sanityWarnings({
+        heightIn: 25,
+        gctMs: 280,
+        fallSeconds: 0.02,
+        boxHeightIn: 12,
+        approach: true,
+        plantContact: true,
+      }),
+    ).toEqual([]);
+    expect(
+      sanityWarnings({
+        heightIn: 25,
+        gctMs: 8,
+        fallSeconds: 0.02,
+        approach: true,
+        plantContact: true,
+      }),
+    ).toEqual(["Plant contact is outside 120–400 ms."]);
+  });
 });
 
 describe("frameClockFromTicks", () => {

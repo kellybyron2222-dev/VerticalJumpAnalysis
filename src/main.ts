@@ -1709,6 +1709,7 @@ function applyResolvedJumps(
         poseSamples,
         events.takeoff,
         events.touchdown,
+        approachTiming,
       );
       approachNotes.push(refined.reason);
       events.touchdown = refined.touchdown;
@@ -2143,16 +2144,17 @@ function render(): void {
     penExtra.stepGapMs === null ? "—" : formatMsValue(penExtra.stepGapMs);
 
   const estimate =
-    fps === null || marks.stepOff === null || marks.touchdown === null
+    approachNow || fps === null || marks.stepOff === null || marks.touchdown === null
       ? null
       : estimateBoxHeight(marks.stepOff, marks.touchdown, fps, stretch, frameTimes ?? undefined);
-  const selectedBox = readBox();
+  const selectedBox = approachNow ? null : readBox();
   const warnings = sanityWarnings({
     heightIn: preview.heightIn,
     gctMs: preview.gctMs,
     boxHeightIn: selectedBox,
     fallSeconds: estimate?.fallSeconds ?? null,
     plantContact: approachNow,
+    approach: approachNow,
   });
   metricsWarning.hidden = warnings.length === 0;
   metricsWarning.textContent =

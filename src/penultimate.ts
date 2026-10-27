@@ -269,15 +269,20 @@ export function detectPenultimate(
   return detectPenultimateDetailed(samples, plantTouchdown, timing).marks;
 }
 
+/** Never accept a refined plant contact shorter than this (real ms). */
+export const MIN_PLANT_CONTACT_MS = 80;
+
 /**
- * Plant TD = when the plant foot first hits in the last contact before takeoff.
- * If the other foot was already down earlier, use the later first-hit (not that
- * earlier contact). Logs the reason for diagnostics.
+ * Plant TD = first ground contact of the final plant step before takeoff.
+ * Prefer the plant foot's first hit (later of L/R streak starts) over an earlier
+ * other-foot contact — but never allow plant contact &lt; 80 ms; if the refine
+ * would, keep the unrefined TD.
  */
 export function refineApproachPlantTouchdown(
   samples: readonly FootSample[],
   takeoff: number,
   proposedTd: number,
+  timing?: ApproachTiming,
 ): { touchdown: number; reason: string } {
   const ordered = orderedSamples(samples);
   if (ordered.length < 4 || !(takeoff > 0)) {
@@ -304,13 +309,34 @@ export function refineApproachPlantTouchdown(
     );
   };
 
-  /** Start frame of the contact streak of `foot` that reaches just before takeoff. */
+  /**
+   * Start frame of the contact streak of `foot` that is still down in the last
+   * few frames before takeoff (final plant step). Earlier steps that already
+   * left the ground are ignored.
+   */
   const streakStart = (foot: "L" | "R" | "C"): number | null => {
-    let i = toIdx - 1;
-    while (i >= 0 && !downAt(ordered[i]!, foot)) i -= 1;
-    if (i < 0) return null;
+    // Foot must be on ground near takeoff to count as the plant step.
+    let near = -1;
+    for (let j = toIdx - 1; j >= Math.max(0, toIdx - 4); j -= 1) {
+      if (downAt(ordered[j]!, foot)) {
+        near = j;
+        break;
+      }
+    }
+    if (near < 0) return null;
+    let i = near;
     while (i >= 0 && downAt(ordered[i]!, foot)) i -= 1;
     return ordered[i + 1]!.frame;
+  };
+
+  const contactMsOf = (td: number): number | null => {
+    const timed = realMs(timing, td, takeoff);
+    if (timed !== null) return timed;
+    // No clock: approximate with capture fps if provided, else reject near-TO blinks.
+    if (timing && timing.fps > 0) {
+      return ((takeoff - td) / timing.fps / (timing.stretch ?? 1)) * 1000;
+    }
+    return null;
   };
 
   const hasLR = ordered.some(
@@ -321,49 +347,59 @@ export function refineApproachPlantTouchdown(
       s.rightHeelY !== undefined,
   );
 
-  let refined = proposedTd;
-  let plantFoot: "L" | "R" | "C" = "C";
-  if (hasLR) {
-    const leftStart = streakStart("L");
-    const rightStart = streakStart("R");
-    // Prefer the later first-hit among feet still down before TO (plant foot).
-    if (leftStart !== null && rightStart !== null) {
-      if (leftStart >= rightStart) {
-        refined = leftStart;
-        plantFoot = "L";
-      } else {
-        refined = rightStart;
-        plantFoot = "R";
-      }
-    } else if (leftStart !== null) {
-      refined = leftStart;
-      plantFoot = "L";
-    } else if (rightStart !== null) {
-      refined = rightStart;
-      plantFoot = "R";
-    } else {
-      const combined = streakStart("C");
-      if (combined !== null) refined = combined;
+  const accept = (
+    foot: "L" | "R" | "C",
+    start: number | null,
+  ): { start: number; ms: number; foot: "L" | "R" | "C" } | null => {
+    if (start === null || !(start < takeoff)) return null;
+    const ms = contactMsOf(start);
+    if (ms === null) {
+      if (takeoff - start >= 8) return { start, ms: takeoff - start, foot };
+      return null;
     }
-  } else {
-    const combined = streakStart("C");
-    if (combined !== null) refined = combined;
+    if (ms >= MIN_PLANT_CONTACT_MS) return { start, ms, foot };
+    return null;
+  };
+
+  // Candidates with ≥80 ms contact. Prefer later first-hit (plant foot vs earlier
+  // other-foot), then longer contact. Near-TO blinks never enter this list.
+  const cands: Array<{ start: number; ms: number; foot: "L" | "R" | "C" }> = [];
+  if (hasLR) {
+    const l = accept("L", streakStart("L"));
+    const r = accept("R", streakStart("R"));
+    if (l) cands.push(l);
+    if (r) cands.push(r);
+  }
+  if (!cands.length) {
+    const c = accept("C", streakStart("C"));
+    if (c) cands.push(c);
+  }
+  // Prefer longer valid plant contact (not a late short join), then earlier start.
+  cands.sort((a, b) => b.ms - a.ms || a.start - b.start);
+  const chosen = cands[0] ?? null;
+  const usedFoot = chosen?.foot ?? "C";
+
+  if (!chosen) {
+    return {
+      touchdown: proposedTd,
+      reason:
+        `plant TD refine rejected (no ≥${MIN_PLANT_CONTACT_MS} ms contact before TO${takeoff});` +
+        ` kept TD${proposedTd}`,
+    };
   }
 
-  if (!(refined < takeoff)) {
-    return { touchdown: proposedTd, reason: "plant TD unchanged (refined invalid)" };
-  }
+  const refined = chosen.start;
   if (refined === proposedTd) {
     return {
       touchdown: proposedTd,
-      reason: `plant TD${proposedTd} = ${plantFoot} first hit before TO${takeoff}`,
+      reason: `plant TD${proposedTd} = ${usedFoot} first hit before TO${takeoff} (${chosen.ms.toFixed(0)} ms)`,
     };
   }
   return {
     touchdown: refined,
     reason:
-      `plant TD refined ${proposedTd}→${refined} (${plantFoot} first hit before TO${takeoff};` +
-      ` not earlier other-foot contact)`,
+      `plant TD refined ${proposedTd}→${refined} (${usedFoot} first hit of final plant step before TO${takeoff},` +
+      ` ${chosen.ms.toFixed(0)} ms; not earlier other-foot contact)`,
   };
 }
 

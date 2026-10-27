@@ -260,6 +260,8 @@ export function sanityWarnings(input: {
   fallSeconds?: number | null;
   /** When true, use plant-contact band 120–400 ms instead of 80–1000. */
   plantContact?: boolean;
+  /** One-step / penultimate — never warn about box free-fall / box height. */
+  approach?: boolean;
 }): string[] {
   const warnings: string[] = [];
   if (input.heightIn !== null) {
@@ -267,7 +269,7 @@ export function sanityWarnings(input: {
     else if (input.heightIn < 2) warnings.push("Jump height is under 2 in.");
   }
   if (input.gctMs !== null) {
-    if (input.plantContact) {
+    if (input.plantContact || input.approach) {
       if (input.gctMs < 120 || input.gctMs > 400) {
         warnings.push("Plant contact is outside 120–400 ms.");
       }
@@ -275,21 +277,24 @@ export function sanityWarnings(input: {
       warnings.push("Contact time is outside 80–1000 ms.");
     }
   }
-  // ~2.5 in to ~40 in of free fall. A single average fps (Photos' 171) misses this.
-  if (input.fallSeconds != null && (input.fallSeconds < 0.11 || input.fallSeconds > 0.45)) {
-    warnings.push("Free-fall time does not match a real box.");
-  }
-  const box = input.boxHeightIn ?? null;
-  if (
-    box !== null &&
-    input.heightIn !== null &&
-    box >= 2 &&
-    input.heightIn >= 2 &&
-    (input.heightIn > box * 6 || box > input.heightIn * 8)
-  ) {
-    warnings.push(
-      "Jump height and the box-height estimate disagree, so the drop and the flight may be on different slow-mo speeds.",
-    );
+  // Box free-fall / height checks are drop/depth only.
+  if (!input.approach) {
+    // ~2.5 in to ~40 in of free fall. A single average fps (Photos' 171) misses this.
+    if (input.fallSeconds != null && (input.fallSeconds < 0.11 || input.fallSeconds > 0.45)) {
+      warnings.push("Free-fall time does not match a real box.");
+    }
+    const box = input.boxHeightIn ?? null;
+    if (
+      box !== null &&
+      input.heightIn !== null &&
+      box >= 2 &&
+      input.heightIn >= 2 &&
+      (input.heightIn > box * 6 || box > input.heightIn * 8)
+    ) {
+      warnings.push(
+        "Jump height and the box-height estimate disagree, so the drop and the flight may be on different slow-mo speeds.",
+      );
+    }
   }
   return warnings;
 }

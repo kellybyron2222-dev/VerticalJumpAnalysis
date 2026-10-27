@@ -125,13 +125,13 @@ describe("penultimate detect", () => {
     expect(events.some((e) => e.foot === "L" && e.takeoff - e.touchdown >= 20)).toBe(true);
   });
 
-  it("refines plant TD to last plant-foot contact before takeoff", () => {
-    // Other foot down early (80–100); plant foot hits at 110; TO at 150.
+  it("refines plant TD to plant-foot first hit, not earlier other-foot", () => {
+    // Other foot early then leaves; plant foot hits at 110; TO at 150 (~167 ms @240fps).
     const samples: FootSample[] = [];
     for (let frame = 0; frame <= 180; frame += 1) {
       let left = 0.7;
       let right = 0.7;
-      if (frame >= 80 && frame <= 148) right = 0.93; // other foot early
+      if (frame >= 80 && frame <= 100) right = 0.93; // other foot (pen) then air
       if (frame >= 110 && frame <= 148) left = 0.94; // plant foot
       if (frame >= 150) {
         left = 0.55;
@@ -146,10 +146,109 @@ describe("penultimate detect", () => {
         rightHeelY: right,
       });
     }
-    const refined = refineApproachPlantTouchdown(samples, 150, 80);
+    const refined = refineApproachPlantTouchdown(samples, 150, 80, timing240);
     expect(refined.touchdown).toBeGreaterThanOrEqual(108);
     expect(refined.touchdown).toBeLessThanOrEqual(112);
-    expect(refined.reason).toMatch(/refined|plant-foot|last/i);
+    expect(refined.reason).toMatch(/refined|first hit/i);
+  });
+
+  it("rejects near-TO blink refine (<80 ms) and keeps unrefined plant TD", () => {
+    // Byron 2026-10-27e failure: real plant ~109–163, pose blink on other foot near TO → 8 ms.
+    const playback = 171.2 / 4;
+    const timing = { fps: 171.2, stretch: 4, frameTimes: pts(400, playback) };
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame <= 200; frame += 1) {
+      let left = 0.7;
+      let right = 0.7;
+      if (frame >= 109 && frame <= 162) left = 0.94; // real plant
+      if (frame >= 160 && frame <= 162) right = 0.94; // late blink / other foot
+      if (frame >= 163) {
+        left = 0.55;
+        right = 0.55;
+      }
+      samples.push({
+        frame,
+        footY: Math.max(left, right),
+        leftFootY: left,
+        rightFootY: right,
+        leftHeelY: left,
+        rightHeelY: right,
+      });
+    }
+    const refined = refineApproachPlantTouchdown(samples, 163, 109, timing);
+    expect(refined.touchdown).toBe(109);
+    expect(refined.reason).toMatch(/TD109|315|first hit/i);
+    const plantMs =
+      ((163 - refined.touchdown) / playback / 4) * 1000;
+    expect(plantMs).toBeGreaterThanOrEqual(150);
+    expect(plantMs).toBeLessThanOrEqual(350);
+  });
+
+  it("Byron penultimate clip marks: plant ~317 ms, pen before plant, gap = pen TO→plant TD", () => {
+    // Frames from build d (IMG_0403): plant TD109 TO163 LD~287; pen before plant.
+    const playback = 171.2 / 4;
+    const timing = { fps: 171.2, stretch: 4, frameTimes: pts(400, playback) };
+    const samples: FootSample[] = [];
+    for (let frame = 0; frame <= 320; frame += 1) {
+      let left = 0.72;
+      let right = 0.72;
+      // Penultimate right foot ~66–92 (~152 ms)
+      if (frame >= 66 && frame <= 92) right = 0.93;
+      // Step gap air 93–108
+      if (frame > 92 && frame < 109) {
+        left = 0.68;
+        right = 0.68;
+      }
+      // Plant left (+ both) 109–162
+      if (frame >= 109 && frame <= 162) {
+        left = 0.94;
+        if (frame >= 120) right = 0.93;
+      }
+      if (frame >= 163 && frame < 287) {
+        left = 0.5;
+        right = 0.5;
+      }
+      if (frame >= 287) {
+        left = 0.93;
+        right = 0.93;
+      }
+      samples.push({
+        frame,
+        footY: Math.max(left, right),
+        leftFootY: left,
+        rightFootY: right,
+        leftHeelY: left,
+        rightHeelY: right,
+      });
+    }
+    const plant = refineApproachPlantTouchdown(samples, 163, 109, timing);
+    expect(plant.touchdown).toBe(109);
+    // Contact TD109→TO163 ≈ 317 ms at 171.2 fps / 4×
+    const gct = approachExtraMetrics({
+      plantTouchdown: 163,
+      penultimateTouchdown: 109,
+      penultimateTakeoff: 163,
+      fps: 171.2,
+      stretch: 4,
+      frameTimes: timing.frameTimes,
+    }).penultimateGctMs!;
+    expect(gct).toBeGreaterThanOrEqual(150);
+    expect(gct).toBeLessThanOrEqual(350);
+
+    const pen = detectPenultimateDetailed(samples, plant.touchdown, timing);
+    expect(pen.marks).not.toBeNull();
+    expect(pen.marks!.takeoff).toBeLessThan(plant.touchdown);
+    const extra = approachExtraMetrics({
+      plantTouchdown: plant.touchdown,
+      penultimateTouchdown: pen.marks!.touchdown,
+      penultimateTakeoff: pen.marks!.takeoff,
+      fps: 171.2,
+      stretch: 4,
+      frameTimes: timing.frameTimes,
+    });
+    expect(extra.penultimateGctMs!).toBeGreaterThanOrEqual(80);
+    expect(extra.stepGapMs!).toBeGreaterThanOrEqual(30);
+    expect(extra.stepGapMs!).toBeLessThan(400);
   });
 
   it("computes penultimate GCT and step gap", () => {
