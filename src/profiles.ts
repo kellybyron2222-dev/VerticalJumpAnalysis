@@ -2,7 +2,11 @@ import { BASELINE_STORAGE_KEY } from "./baseline.ts";
 import { BOX_HEIGHT_PREF_KEY } from "./boxHeightPref.ts";
 import { ACTIVE_BOX_TEST_KEY, WORKING_BOX_STORAGE_KEY } from "./boxTest.ts";
 import { CHART_MODE_PREF_KEY } from "./chartModePref.ts";
-import { GITHUB_SYNC_META_KEY, GITHUB_TOKEN_KEY } from "./githubSync.ts";
+import {
+  GITHUB_DELETED_IDS_KEY,
+  GITHUB_SYNC_META_KEY,
+  GITHUB_TOKEN_KEY,
+} from "./githubSync.ts";
 import { JUMP_COUNT_PREF_KEY } from "./jumpCountPref.ts";
 import { JUMP_TYPE_PREF_KEY } from "./jumpTypePref.ts";
 import { GCT_TARGET_STORAGE_KEY } from "./raiseBox.ts";
@@ -31,6 +35,7 @@ export const PROFILE_SCOPED_KEYS = [
   GCT_TARGET_STORAGE_KEY,
   GITHUB_TOKEN_KEY,
   GITHUB_SYNC_META_KEY,
+  GITHUB_DELETED_IDS_KEY,
   VISITED_KEY,
 ] as const;
 

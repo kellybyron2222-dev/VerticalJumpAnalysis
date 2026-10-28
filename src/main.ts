@@ -153,6 +153,7 @@ import {
 import {
   loadGithubToken,
   loadSyncMeta,
+  markDeleted,
   markDirty,
   saveGithubToken,
   syncGithubLog,
@@ -877,6 +878,7 @@ function renderMasterLog(): void {
     del.textContent = "Delete";
     del.addEventListener("click", () => {
       if (!confirm("Delete this jump from the log?")) return;
+      markDeleted(store, row.id);
       const next = loadTrials(store).filter((trial) => trial.id !== row.id);
       void persistJumpLog(next).then(() => renderTrials());
     });
@@ -2902,6 +2904,7 @@ function renderTrial(trial: TrialRecord): HTMLLIElement {
       return;
     }
     pendingDeleteId = null;
+    markDeleted(store, trial.id);
     const next = loadTrials(store).filter((entry) => entry.id !== trial.id);
     void persistJumpLog(next).then(() => renderTrials());
   });
