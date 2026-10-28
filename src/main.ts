@@ -1722,23 +1722,45 @@ function applyResolvedJumps(
     const approach = jumpType === "penultimate" || jumpType === "oneStep";
     penTdBeforeClip = false;
     if (approach) {
-      // Keep main-detect plant TO / landing / flight. Approach detect only suggests
-      // plant TD + penultimate marks (L/R labels are unreliable; TD is editable).
+      // Auto plant TO / landing: take the longer of main-detect vs approach-detect
+      // flight (usually the true jump). Plant TD stays an approach suggestion.
+      // Pen TD before clip → blank contact (not a guess).
       const fromPose = detectApproachFromPose(poseSamples, approachTiming);
       if (fromPose) {
-        events.touchdown = fromPose.touchdown;
-        // Prefer approach TO/LD only when they land inside the main flight window
-        // (same takeoff→landing span ±8 frames); otherwise keep main-detect TO/LD.
-        const toClose = Math.abs(fromPose.takeoff - events.takeoff) <= 8;
-        const ldClose = Math.abs(fromPose.landing - events.landing) <= 8;
-        if (toClose && ldClose) {
+        const mainFlight =
+          realSecondsOnClock(
+            frameTimes ?? undefined,
+            events.takeoff,
+            events.landing,
+            meta.fps,
+            meta.stretch,
+          ) * 1000;
+        const approachFlight =
+          fromPose.flightMs ??
+          realSecondsOnClock(
+            frameTimes ?? undefined,
+            fromPose.takeoff,
+            fromPose.landing,
+            meta.fps,
+            meta.stretch,
+          ) * 1000;
+        const useApproachFlight =
+          Number.isFinite(approachFlight) &&
+          (!Number.isFinite(mainFlight) || approachFlight >= mainFlight - 15);
+        if (useApproachFlight) {
           events.takeoff = fromPose.takeoff;
           events.landing = fromPose.landing;
         }
+        events.touchdown = fromPose.touchdown;
         marks.penTouchdown = fromPose.penTdBeforeClip ? null : fromPose.penTouchdown;
         marks.penTakeoff = fromPose.penTakeoff;
         penTdBeforeClip = fromPose.penTdBeforeClip;
         approachNotes.push(fromPose.reason);
+        approachNotes.push(
+          useApproachFlight
+            ? `flight from approach detect (${approachFlight.toFixed?.(0) ?? approachFlight} ms)`
+            : `flight from main detect (${mainFlight.toFixed?.(0) ?? mainFlight} ms)`,
+        );
         if (penTdBeforeClip) {
           approachNotes.push(
             "Penultimate contact blank — TD started before clip (not a guess).",
