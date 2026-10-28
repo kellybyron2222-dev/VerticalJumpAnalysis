@@ -1,8 +1,11 @@
 /**
- * Label-agnostic approach (penultimate / one-step) plant + penultimate marks.
- * MediaPipe swaps L/R at trail-foot join — never trust foot identity for plant TD/TO/LD.
- * Plant TD = first any-foot ground of the final plant; TO = last any-foot ground;
- * landing = first any-foot ground after flight.
+ * Label-agnostic approach plant + penultimate marks.
+ *
+ * Plant TO / landing: longest flight from any-foot floor contact.
+ * Plant TD: walk BACKWARD from TO in the continuous planted window
+ * (y near floor + y-velocity near zero; bridge ≤2 frames only).
+ * Plant contact must be 200–450 ms; otherwise try the next flight window.
+ * Pen TO = end of the previous floor-contact window before plant TD.
  */
 import { groundModel, type FootSample, type GroundModel } from "./detect.ts";
 import { realSecondsOnClock } from "./metrics.ts";
@@ -17,16 +20,18 @@ export interface ApproachDetectResult {
   touchdown: number;
   takeoff: number;
   landing: number;
-  /** Null when the penultimate foot is already down as the athlete enters frame. */
   penTouchdown: number | null;
   penTakeoff: number | null;
-  /** True when pen TD is not visible (entered mid-contact). */
   penTdBeforeClip: boolean;
   plantContactMs: number | null;
   flightMs: number | null;
   stepGapMs: number | null;
   reason: string;
 }
+
+export const PLANT_CONTACT_MIN_MS = 200;
+export const PLANT_CONTACT_MAX_MS = 450;
+export const MAX_BRIDGE_FRAMES = 2;
 
 function orderedSamples(samples: readonly FootSample[]): FootSample[] {
   const byFrame = new Map<number, FootSample>();
@@ -53,43 +58,57 @@ function realMs(
   return Number.isFinite(s) && s >= 0 ? s * 1000 : null;
 }
 
-function footYs(s: FootSample): number[] {
-  return [
-    s.footY,
-    s.heelY,
-    s.leftFootY,
-    s.rightFootY,
-    s.leftHeelY,
-    s.rightHeelY,
-  ].filter((y): y is number => y !== undefined && Number.isFinite(y));
+function anyFootY(s: FootSample): number {
+  let best = s.footY;
+  for (const y of [s.heelY, s.leftFootY, s.rightFootY, s.leftHeelY, s.rightHeelY]) {
+    if (y !== undefined && Number.isFinite(y) && y > best) best = y;
+  }
+  return best;
 }
 
-/** Strict any-foot ground — keeps step-gap air from merging into plant. */
-function buildStrictGround(ordered: readonly FootSample[], model: GroundModel): boolean[] {
+function buildFloorContact(
+  ordered: readonly FootSample[],
+  model: GroundModel,
+): boolean[] {
   const floor = model.ground;
-  const tol = model.tolerance;
-  return ordered.map((s) => footYs(s).some((y) => y >= floor - tol));
+  const tol = Math.max(model.tolerance, 0.025);
+  return ordered.map((s) => anyFootY(s) >= floor - tol);
 }
 
-/**
- * Loose any-foot ground — picks up a single lead heel before the trail joins.
- * Only used when walking plant TD back from a firm takeoff.
- */
-function buildLooseGround(ordered: readonly FootSample[], model: GroundModel): boolean[] {
-  const floor = model.ground - 0.015;
-  const tol = Math.max(model.tolerance, 0.04);
-  return ordered.map((s) => footYs(s).some((y) => y >= floor - tol));
+/** Planted = near floor AND low |y-velocity| (rejects swing-through in the step gap). */
+function buildPlantedContact(
+  ordered: readonly FootSample[],
+  model: GroundModel,
+): boolean[] {
+  const ys = ordered.map(anyFootY);
+  const floor = model.ground;
+  const tol = Math.max(model.tolerance, 0.032);
+  return ys.map((y, i) => {
+    if (y < floor - tol) return false;
+    let vel = 0;
+    if (i > 0 && i < ordered.length - 1) {
+      const dt = Math.max(1, ordered[i + 1]!.frame - ordered[i - 1]!.frame);
+      vel = (ys[i + 1]! - ys[i - 1]!) / dt;
+    } else if (i > 0) {
+      const dt = Math.max(1, ordered[i]!.frame - ordered[i - 1]!.frame);
+      vel = (y - ys[i - 1]!) / dt;
+    }
+    return Math.abs(vel) <= 0.022;
+  });
 }
 
-/** Fill brief pose holes (not large enough to bridge a real step gap ~150+ ms). */
-function fillHoles(frames: readonly number[], on: readonly boolean[], maxHole = 4): boolean[] {
+function fillHoles(
+  frames: readonly number[],
+  on: readonly boolean[],
+  maxHole = MAX_BRIDGE_FRAMES,
+): boolean[] {
   const out = [...on];
   let lastOn = -1;
   for (let i = 0; i < out.length; i += 1) {
     if (!out[i]) continue;
     if (lastOn >= 0) {
-      const hole = frames[i]! - frames[lastOn]!;
-      if (hole > 1 && hole <= maxHole + 1) {
+      const gapFrames = frames[i]! - frames[lastOn]! - 1;
+      if (gapFrames > 0 && gapFrames <= maxHole) {
         for (let k = lastOn + 1; k < i; k += 1) out[k] = true;
       }
     }
@@ -103,8 +122,8 @@ interface Streak {
   toIdx: number;
 }
 
-function groundStreaks(frames: readonly number[], on: readonly boolean[]): Streak[] {
-  const filled = fillHoles(frames, on);
+function streaksOf(frames: readonly number[], on: readonly boolean[]): Streak[] {
+  const filled = fillHoles(frames, on, MAX_BRIDGE_FRAMES);
   const out: Streak[] = [];
   let i = 0;
   while (i < frames.length) {
@@ -119,27 +138,24 @@ function groundStreaks(frames: readonly number[], on: readonly boolean[]): Strea
   return out;
 }
 
-/**
- * Walk plant TD earlier from takeoff using loose ground, stopping at a real air gap.
- */
-function refinePlantTdEarlier(
+function tdWalkBack(
   frames: readonly number[],
-  loose: readonly boolean[],
+  filled: readonly boolean[],
   toIdx: number,
-  notBeforeFrame: number,
 ): number {
-  const filled = fillHoles(frames, loose, 5);
   let i = toIdx;
-  while (i > 0 && frames[i]! > notBeforeFrame && filled[i]) i -= 1;
-  // i is last air (or boundary); plant starts at i+1 if that sample is down.
-  const start = filled[i] ? i : i + 1;
-  return frames[Math.min(toIdx, Math.max(0, start))]!;
+  if (!filled[i]) {
+    while (i > 0 && !filled[i]) i -= 1;
+    if (!filled[i]) return frames[toIdx]!;
+  }
+  while (i > 0 && filled[i - 1]) i -= 1;
+  return frames[i]!;
 }
 
-/**
- * Detect approach plant + penultimate from pose using any-foot ground only.
- * Does not use L/R labels. Pen TD is blank when contact starts at clip entry.
- */
+function inPlantBand(ms: number | null): boolean {
+  return ms !== null && ms >= PLANT_CONTACT_MIN_MS && ms <= PLANT_CONTACT_MAX_MS;
+}
+
 export function detectApproachFromPose(
   samples: readonly FootSample[],
   timing: ApproachTiming,
@@ -150,116 +166,124 @@ export function detectApproachFromPose(
   if (!model) return null;
 
   const frames = ordered.map((s) => s.frame);
-  const strict = buildStrictGround(ordered, model);
-  const loose = buildLooseGround(ordered, model);
-  const streaks = groundStreaks(frames, strict);
-  if (streaks.length < 1) return null;
+  const floorOn = buildFloorContact(ordered, model);
+  const flightStreaks = streaksOf(frames, floorOn);
+  if (flightStreaks.length < 1) return null;
 
   type FlightCand = {
     takeoff: number;
     landing: number;
-    plantTd: number;
-    plantTo: number;
-    flightMs: number;
-    plantMs: number;
-    streakIdx: number;
     toIdx: number;
+    flightMs: number;
   };
   const flights: FlightCand[] = [];
-  for (let i = 0; i < streaks.length - 1; i += 1) {
-    const plant = streaks[i]!;
-    const land = streaks[i + 1]!;
+  for (let i = 0; i < flightStreaks.length - 1; i += 1) {
+    const plant = flightStreaks[i]!;
+    const land = flightStreaks[i + 1]!;
     const takeoff = frames[plant.toIdx]!;
     const landing = frames[land.tdIdx]!;
-    const plantTd = frames[plant.tdIdx]!;
-    const plantTo = takeoff;
     if (!(landing > takeoff + 2)) continue;
     const flightMs = realMs(timing, takeoff, landing);
-    const plantMs = realMs(timing, plantTd, plantTo);
-    if (flightMs === null || plantMs === null) continue;
-    if (flightMs < 150 || plantMs < 80) continue;
-    flights.push({
-      takeoff,
-      landing,
-      plantTd,
-      plantTo,
-      flightMs,
-      plantMs,
-      streakIdx: i,
-      toIdx: plant.toIdx,
-    });
+    if (flightMs === null || flightMs < 150) continue;
+    flights.push({ takeoff, landing, toIdx: plant.toIdx, flightMs });
   }
   if (!flights.length) return null;
+  flights.sort((a, b) => b.flightMs - a.flightMs);
 
-  // Prefer longest flight, then typical approach plant band (~250–420 ms).
-  flights.sort((a, b) => {
-    const band = (p: FlightCand) => (p.plantMs >= 250 && p.plantMs <= 420 ? 1 : 0);
-    return b.flightMs - a.flightMs || band(b) - band(a) || b.plantMs - a.plantMs;
-  });
-  let best = flights[0]!;
-  const strictPlantTd = best.plantTd;
+  const planted = buildPlantedContact(ordered, model);
+  const plantedFilled = fillHoles(frames, planted, MAX_BRIDGE_FRAMES);
+  const plantedStreaks = streaksOf(frames, planted);
 
-  // Penultimate vs strict plant start (before loose TD refine).
+  let chosen: {
+    takeoff: number;
+    landing: number;
+    plantTd: number;
+    plantMs: number;
+  } | null = null;
+
+  for (const fl of flights) {
+    // 1) Walk back from TO in planted window (bridge ≤2).
+    let plantTd = tdWalkBack(frames, plantedFilled, fl.toIdx);
+    let plantMs = realMs(timing, plantTd, fl.takeoff);
+    if (!inPlantBand(plantMs) || !(plantTd < fl.takeoff)) {
+      // 2) Next window: planted streak that contains TO (no cross-gap walk).
+      const containing = plantedStreaks.find(
+        (st) => st.tdIdx <= fl.toIdx && fl.toIdx <= st.toIdx,
+      );
+      if (!containing) continue;
+      plantTd = frames[containing.tdIdx]!;
+      plantMs = realMs(timing, plantTd, fl.takeoff);
+      if (!inPlantBand(plantMs) || !(plantTd < fl.takeoff)) continue;
+    }
+    chosen = {
+      takeoff: fl.takeoff,
+      landing: fl.landing,
+      plantTd,
+      plantMs: plantMs!,
+    };
+    break;
+  }
+
+  if (!chosen) {
+    // Keep TO/LD from longest flight; TD from planted streak containing TO if any.
+    const fl = flights[0]!;
+    const containing = plantedStreaks.find(
+      (st) => st.tdIdx <= fl.toIdx && fl.toIdx <= st.toIdx,
+    );
+    const plantTd = containing
+      ? frames[containing.tdIdx]!
+      : tdWalkBack(frames, plantedFilled, fl.toIdx);
+    const plantMs = realMs(timing, plantTd, fl.takeoff) ?? 0;
+    chosen = { takeoff: fl.takeoff, landing: fl.landing, plantTd, plantMs };
+  }
+
+  // Penultimate TO = end of prior floor streak with gap ≥60 ms before plant TD.
+  const penStreaks = streaksOf(frames, floorOn);
   let penTouchdown: number | null = null;
   let penTakeoff: number | null = null;
   let penTdBeforeClip = false;
-  let penStreakIdx = -1;
-  for (let i = 0; i < streaks.length; i += 1) {
-    const st = streaks[i]!;
-    const to = frames[st.toIdx]!;
-    if (!(to < strictPlantTd)) break;
-    const gap = realMs(timing, to, strictPlantTd);
+  let prevIdx = -1;
+  for (let i = 0; i < penStreaks.length; i += 1) {
+    const to = frames[penStreaks[i]!.toIdx]!;
+    if (!(to < chosen.plantTd)) break;
+    const gap = realMs(timing, to, chosen.plantTd);
     if (gap === null || gap < 60) continue;
-    penStreakIdx = i;
+    prevIdx = i;
     penTakeoff = to;
-    penTouchdown = frames[st.tdIdx]!;
+    penTouchdown = frames[penStreaks[i]!.tdIdx]!;
   }
-  if (penStreakIdx === 0) {
+  if (prevIdx <= 0) {
     penTdBeforeClip = true;
     penTouchdown = null;
-  } else if (penStreakIdx < 0) {
+    if (prevIdx < 0) penTakeoff = null;
+  } else if (penTouchdown !== null && penTouchdown <= frames[0]! + 5) {
     penTdBeforeClip = true;
     penTouchdown = null;
+  }
+  if (penTakeoff !== null && !(penTakeoff < chosen.plantTd)) {
     penTakeoff = null;
-  } else if (penTouchdown !== null) {
-    const firstPersonIdx = ordered.findIndex((s) => Number.isFinite(s.footY));
-    const entryFrame = firstPersonIdx >= 0 ? frames[firstPersonIdx]! : frames[0]!;
-    if (penTouchdown <= entryFrame + 5) {
-      penTdBeforeClip = true;
-      penTouchdown = null;
-    }
-  }
-
-  // Refine plant TD earlier with loose ground, but not into the penultimate streak.
-  const notBefore = penTakeoff !== null ? penTakeoff + 2 : frames[0]!;
-  const refinedTd = refinePlantTdEarlier(frames, loose, best.toIdx, notBefore);
-  if (refinedTd < best.plantTd && refinedTd < best.takeoff) {
-    const plantMs = realMs(timing, refinedTd, best.takeoff);
-    if (plantMs !== null && plantMs >= 80) {
-      best = { ...best, plantTd: refinedTd, plantMs };
-    }
   }
 
   const stepGapMs =
-    penTakeoff !== null ? realMs(timing, penTakeoff, best.plantTd) : null;
+    penTakeoff !== null ? realMs(timing, penTakeoff, chosen.plantTd) : null;
 
   const reason = penTdBeforeClip
-    ? `approach any-foot plant TD${best.plantTd} TO${best.plantTo} LD${best.landing}; pen TD started before clip` +
+    ? `approach plant TD${chosen.plantTd} TO${chosen.takeoff} LD${chosen.landing}; pen TD started before clip` +
       (penTakeoff !== null ? ` (pen TO${penTakeoff})` : "")
-    : `approach any-foot plant TD${best.plantTd} TO${best.plantTo} LD${best.landing}` +
+    : `approach plant TD${chosen.plantTd} TO${chosen.takeoff} LD${chosen.landing}` +
       (penTouchdown !== null && penTakeoff !== null
         ? `; pen TD${penTouchdown} TO${penTakeoff}`
         : "");
 
   return {
-    touchdown: best.plantTd,
-    takeoff: best.plantTo,
-    landing: best.landing,
+    touchdown: chosen.plantTd,
+    takeoff: chosen.takeoff,
+    landing: chosen.landing,
     penTouchdown,
     penTakeoff,
     penTdBeforeClip,
-    plantContactMs: best.plantMs,
-    flightMs: best.flightMs,
+    plantContactMs: chosen.plantMs,
+    flightMs: realMs(timing, chosen.takeoff, chosen.landing),
     stepGapMs,
     reason,
   };
