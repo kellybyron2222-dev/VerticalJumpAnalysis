@@ -176,6 +176,7 @@ async function runClip(id) {
     if (Date.now() - started > 480_000) throw new Error(`${id} detect timeout: ${status}`);
     await page.waitForTimeout(2000);
   }
+  const detectMs = Date.now() - started;
 
   const det = await page.evaluate(() => {
     const num = (sel) => {
@@ -212,6 +213,7 @@ async function runClip(id) {
   const checks = [];
   const row = {
     id,
+    detect_ms: detectMs,
     det_td: det.td,
     gt_td: t.plant_td,
     det_to: det.to,
@@ -298,7 +300,7 @@ for (const id of CLIPS) {
 
 console.log("\n=== SUMMARY (detected vs truth) ===");
 console.log(
-  "clip | TD det/gt | TO det/gt | LD det/gt | plantMs det/gt | flightMs det/gt | height det/gt | gapMs det/gt",
+  "clip | sec | TD det/gt | TO det/gt | LD det/gt | plantMs det/gt | flightMs det/gt | height det/gt | gapMs det/gt",
 );
 for (const r of results) {
   const x = r.row;
@@ -306,10 +308,21 @@ for (const r of results) {
     console.log(x.id, "ERROR", x.error);
     continue;
   }
+  const sec = x.detect_ms != null ? (x.detect_ms / 1000).toFixed(1) : "?";
   console.log(
-    `${x.id} | ${x.det_td}/${x.gt_td} | ${x.det_to}/${x.gt_to} | ${x.det_ld}/${x.gt_ld} | ${x.det_plant_ms?.toFixed?.(1) ?? x.det_plant_ms}/${x.gt_plant_ms} | ${x.det_flight_ms?.toFixed?.(1) ?? x.det_flight_ms}/${x.gt_flight_ms} | ${x.det_height?.toFixed?.(2) ?? x.det_height}/${x.gt_height} | ${x.det_gap_ms?.toFixed?.(1) ?? x.det_gap_ms}/${x.gt_gap_ms}`,
+    `${x.id} | ${sec}s | ${x.det_td}/${x.gt_td} | ${x.det_to}/${x.gt_to} | ${x.det_ld}/${x.gt_ld} | ${x.det_plant_ms?.toFixed?.(1) ?? x.det_plant_ms}/${x.gt_plant_ms} | ${x.det_flight_ms?.toFixed?.(1) ?? x.det_flight_ms}/${x.gt_flight_ms} | ${x.det_height?.toFixed?.(2) ?? x.det_height}/${x.gt_height} | ${x.det_gap_ms?.toFixed?.(1) ?? x.det_gap_ms}/${x.gt_gap_ms}`,
   );
 }
+console.log(
+  "model",
+  HEAVY ? "heavy" : "lite",
+  "gate_failed",
+  failed,
+  "total_detect_s",
+  (
+    results.reduce((s, r) => s + (r.row.detect_ms ?? 0), 0) / 1000
+  ).toFixed(1),
+);
 
 await browser.close();
 server.close();
