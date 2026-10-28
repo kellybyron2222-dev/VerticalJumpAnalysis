@@ -667,15 +667,18 @@ export function approachPlausibilityWarnings(input: {
   /** Largest real flight among clip candidates (ms), when known. */
   largestFlightMs?: number | null;
   penultimateFound: boolean;
+  /** Athlete entered mid penultimate contact — TD blank is expected. */
+  penTdBeforeClip?: boolean;
 }): string[] {
   const warnings: string[] = [];
-  if (!input.penultimateFound) {
+  if (!input.penultimateFound && !input.penTdBeforeClip) {
     warnings.push(
       "Check marks: penultimate step not found — mark penultimate TD/TO manually if visible.",
     );
     return warnings;
   }
-  if (penultimateContactOutOfBand(input.penultimateGctMs)) {
+  // Pen TD before clip → no pen contact to band-check.
+  if (!input.penTdBeforeClip && penultimateContactOutOfBand(input.penultimateGctMs)) {
     warnings.push(
       `Check marks: penultimate contact ${input.penultimateGctMs!.toFixed(0)} ms outside 80–300 ms.`,
     );

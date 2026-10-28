@@ -77,15 +77,14 @@ import {
   parseJumpType,
   saveJumpTypePref,
 } from "./jumpTypePref.ts";
+import { detectApproachFromPose } from "./approachDetect.ts";
 import {
   approachExtraMetrics,
   approachPlausibilityWarnings,
-  detectPenultimateDetailed,
   formatFootContactNotes,
   listFootContactsBeforePlant,
   plantContactOutOfBand,
   penultimateContactOutOfBand,
-  refineApproachPlantTouchdown,
   stepGapOutOfBand,
 } from "./penultimate.ts";
 import {
@@ -407,6 +406,8 @@ const marks = {
   penTouchdown: null as number | null,
   penTakeoff: null as number | null,
 };
+/** Penultimate TD not visible — athlete entered mid-contact. */
+let penTdBeforeClip = false;
 
 let frame = 0;
 let ready = false;
@@ -1707,18 +1708,23 @@ function applyResolvedJumps(
     };
     let approachNotes: string[] = [];
     const approach = jumpType === "penultimate" || jumpType === "oneStep";
+    penTdBeforeClip = false;
     if (approach) {
-      const refined = refineApproachPlantTouchdown(
-        poseSamples,
-        events.takeoff,
-        events.touchdown,
-        approachTiming,
-      );
-      approachNotes.push(refined.reason);
-      events.touchdown = refined.touchdown;
-    }
-    marks.touchdown = events.touchdown;
-    if (approach) {
+      // Label-agnostic plant TD/TO/LD + penultimate (L/R identity is unreliable).
+      const fromPose = detectApproachFromPose(poseSamples, approachTiming);
+      if (fromPose) {
+        events.touchdown = fromPose.touchdown;
+        events.takeoff = fromPose.takeoff;
+        events.landing = fromPose.landing;
+        marks.penTouchdown = fromPose.penTouchdown;
+        marks.penTakeoff = fromPose.penTakeoff;
+        penTdBeforeClip = fromPose.penTdBeforeClip;
+        approachNotes.push(fromPose.reason);
+      } else {
+        marks.penTouchdown = null;
+        marks.penTakeoff = null;
+        approachNotes.push("approach any-foot detect: no plant/flight streak found");
+      }
       const footEvents = listFootContactsBeforePlant(
         poseSamples,
         events.touchdown,
@@ -1731,16 +1737,10 @@ function applyResolvedJumps(
         `Plant frames used: TD${events.touchdown} TO${events.takeoff} LD${events.landing}`,
       );
     }
+    marks.touchdown = events.touchdown;
+    marks.takeoff = events.takeoff;
+    marks.landing = events.landing;
     if (jumpType === "penultimate") {
-      const penResult = detectPenultimateDetailed(
-        poseSamples,
-        events.touchdown,
-        approachTiming,
-      );
-      const pen = penResult.marks;
-      marks.penTouchdown = pen?.touchdown ?? null;
-      marks.penTakeoff = pen?.takeoff ?? null;
-      approachNotes.push(penResult.reason);
       const extra = approachExtraMetrics({
         plantTouchdown: events.touchdown,
         penultimateTouchdown: marks.penTouchdown,
@@ -1758,20 +1758,25 @@ function applyResolvedJumps(
           meta.stretch,
         ) * 1000;
       const largestFlightMs = largestCandidateFlightMs(meta.fps, meta.stretch);
+      const penFound = marks.penTakeoff !== null || penTdBeforeClip;
       const approachWarn = approachPlausibilityWarnings({
         penultimateGctMs: extra.penultimateGctMs,
         stepGapMs: extra.stepGapMs,
         plantFlightMs: Number.isFinite(plantFlightMs) ? plantFlightMs : null,
         largestFlightMs,
-        penultimateFound: pen !== null,
+        penultimateFound: penFound,
+        penTdBeforeClip,
       });
-      if (penResult.lowConfidence && pen) {
-        approachWarn.unshift(`Check marks: ${penResult.reason}. Verify penultimate TD/TO.`);
-      }
       approachNotes.push(...approachWarn);
-      if (pen && extra.penultimateGctMs != null) {
+      if (penTdBeforeClip) {
         approachNotes.push(
-          `Penultimate ${pen.foot} TD${pen.touchdown} TO${pen.takeoff}` +
+          `Penultimate TD started before clip` +
+            (marks.penTakeoff !== null ? ` · pen TO${marks.penTakeoff}` : "") +
+            (extra.stepGapMs != null ? ` · gap ${extra.stepGapMs.toFixed(0)} ms` : ""),
+        );
+      } else if (marks.penTouchdown !== null && marks.penTakeoff !== null && extra.penultimateGctMs != null) {
+        approachNotes.push(
+          `Penultimate TD${marks.penTouchdown} TO${marks.penTakeoff}` +
             ` · contact ${extra.penultimateGctMs.toFixed(0)} ms · gap ${extra.stepGapMs?.toFixed(0) ?? "—"} ms`,
         );
       }
@@ -1782,6 +1787,7 @@ function applyResolvedJumps(
     } else {
       marks.penTouchdown = null;
       marks.penTakeoff = null;
+      penTdBeforeClip = false;
     }
     if (approachNotes.length && lastDetectCache) {
       const diagnostics = {
@@ -1799,9 +1805,11 @@ function applyResolvedJumps(
         ? "Marks set — Check marks flagged. Use Go to / Set on each event."
         : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
     ) + (checkNotes.length ? ` ${checkNotes.join(" ")}` : "");
-    if (jumpType === "penultimate" && marks.penTouchdown === null) {
+    if (jumpType === "penultimate" && marks.penTakeoff === null && !penTdBeforeClip) {
       detectStatus.textContent += " Penultimate step not found — mark manually if visible.";
       setCheckMarksFlag(true, "Check marks — penultimate step not found. Mark TD/TO manually.");
+    } else if (jumpType === "penultimate" && penTdBeforeClip) {
+      detectStatus.textContent += " Penultimate TD started before clip.";
     }
     refreshJumpOverlay();
     return;
@@ -1812,6 +1820,7 @@ function applyResolvedJumps(
   marks.stepOff = first.stepOff;
   marks.penTouchdown = null;
   marks.penTakeoff = null;
+  penTdBeforeClip = false;
   marks.touchdown = first.touchdown;
   marks.takeoff = first.takeoff;
   marks.landing = first.landing;
@@ -2095,7 +2104,13 @@ function render(): void {
   }
 
   renderMark(marks.stepOff, "#so-frame", "#goto-so", "#clear-so");
-  renderMark(marks.penTouchdown, "#pen-td-frame", "#goto-pen-td", "#clear-pen-td");
+  if (penTdBeforeClip && marks.penTouchdown === null) {
+    must<HTMLElement>("#pen-td-frame").textContent = "— (started before clip)";
+    must<HTMLButtonElement>("#goto-pen-td").disabled = true;
+    must<HTMLButtonElement>("#clear-pen-td").disabled = true;
+  } else {
+    renderMark(marks.penTouchdown, "#pen-td-frame", "#goto-pen-td", "#clear-pen-td");
+  }
   renderMark(marks.penTakeoff, "#pen-to-frame", "#goto-pen-to", "#clear-pen-to");
   renderMark(marks.touchdown, "#td-frame", "#goto-td", "#clear-td");
   renderMark(marks.takeoff, "#to-frame", "#goto-to", "#clear-to");
@@ -2144,7 +2159,11 @@ function render(): void {
     preview.heightCm === null ? "in" : `${formatHeightCm(preview.heightCm)}`;
   must<HTMLElement>("#m-rsi").textContent = preview.rsi === null ? "—" : formatRsi(preview.rsi);
   must<HTMLElement>("#m-pen-gct").textContent =
-    penExtra.penultimateGctMs === null ? "—" : formatMsValue(penExtra.penultimateGctMs);
+    penTdBeforeClip && penExtra.penultimateGctMs === null
+      ? "— (started before clip)"
+      : penExtra.penultimateGctMs === null
+        ? "—"
+        : formatMsValue(penExtra.penultimateGctMs);
   must<HTMLElement>("#m-step-gap").textContent =
     penExtra.stepGapMs === null ? "—" : formatMsValue(penExtra.stepGapMs);
 
@@ -2171,8 +2190,8 @@ function render(): void {
   const penMissing =
     jumpTypeNow === "penultimate" &&
     marks.touchdown !== null &&
-    marks.penTouchdown === null &&
-    marks.penTakeoff === null;
+    marks.penTakeoff === null &&
+    !penTdBeforeClip;
   if (plantBad) {
     checkMarksFlag.hidden = false;
     checkMarksFlag.textContent = "Check marks — plant contact outside 120–400 ms.";
