@@ -583,6 +583,16 @@ bindMark("penTakeoff", "#set-pen-to", "#goto-pen-to", "#clear-pen-to");
 bindMark("touchdown", "#set-td", "#goto-td", "#clear-td");
 bindMark("takeoff", "#set-to", "#goto-to", "#clear-to");
 bindMark("landing", "#set-ld", "#goto-ld", "#clear-ld");
+must<HTMLButtonElement>("#nudge-pen-td-minus").addEventListener("click", () => nudgeMark("penTouchdown", -1));
+must<HTMLButtonElement>("#nudge-pen-td-plus").addEventListener("click", () => nudgeMark("penTouchdown", 1));
+must<HTMLButtonElement>("#nudge-pen-to-minus").addEventListener("click", () => nudgeMark("penTakeoff", -1));
+must<HTMLButtonElement>("#nudge-pen-to-plus").addEventListener("click", () => nudgeMark("penTakeoff", 1));
+must<HTMLButtonElement>("#nudge-td-minus").addEventListener("click", () => nudgeMark("touchdown", -1));
+must<HTMLButtonElement>("#nudge-td-plus").addEventListener("click", () => nudgeMark("touchdown", 1));
+must<HTMLButtonElement>("#nudge-to-minus").addEventListener("click", () => nudgeMark("takeoff", -1));
+must<HTMLButtonElement>("#nudge-to-plus").addEventListener("click", () => nudgeMark("takeoff", 1));
+must<HTMLButtonElement>("#nudge-ld-minus").addEventListener("click", () => nudgeMark("landing", -1));
+must<HTMLButtonElement>("#nudge-ld-plus").addEventListener("click", () => nudgeMark("landing", 1));
 
 jumpForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1219,6 +1229,8 @@ function applyJumpTypeUi(jumpType: JumpType): void {
   markPenTd.hidden = !penultimate;
   markPenTo.hidden = !penultimate;
   tdLabel.textContent = approach ? "Plant touchdown" : "Touchdown";
+  const tdHint = document.querySelector<HTMLElement>("#td-hint");
+  if (tdHint) tdHint.hidden = !approach;
   mGctLabel.textContent = approach ? "Plant contact" : "Contact time";
   mRsiLabel.textContent = approach ? "Plant RSI" : "RSI";
   mPenGctCard.hidden = !penultimate;
@@ -1710,16 +1722,28 @@ function applyResolvedJumps(
     const approach = jumpType === "penultimate" || jumpType === "oneStep";
     penTdBeforeClip = false;
     if (approach) {
-      // Label-agnostic plant TD/TO/LD + penultimate (L/R identity is unreliable).
+      // Keep main-detect plant TO / landing / flight. Approach detect only suggests
+      // plant TD + penultimate marks (L/R labels are unreliable; TD is editable).
       const fromPose = detectApproachFromPose(poseSamples, approachTiming);
       if (fromPose) {
         events.touchdown = fromPose.touchdown;
-        events.takeoff = fromPose.takeoff;
-        events.landing = fromPose.landing;
-        marks.penTouchdown = fromPose.penTouchdown;
+        // Prefer approach TO/LD only when they land inside the main flight window
+        // (same takeoff→landing span ±8 frames); otherwise keep main-detect TO/LD.
+        const toClose = Math.abs(fromPose.takeoff - events.takeoff) <= 8;
+        const ldClose = Math.abs(fromPose.landing - events.landing) <= 8;
+        if (toClose && ldClose) {
+          events.takeoff = fromPose.takeoff;
+          events.landing = fromPose.landing;
+        }
+        marks.penTouchdown = fromPose.penTdBeforeClip ? null : fromPose.penTouchdown;
         marks.penTakeoff = fromPose.penTakeoff;
         penTdBeforeClip = fromPose.penTdBeforeClip;
         approachNotes.push(fromPose.reason);
+        if (penTdBeforeClip) {
+          approachNotes.push(
+            "Penultimate contact blank — TD started before clip (not a guess).",
+          );
+        }
       } else {
         marks.penTouchdown = null;
         marks.penTakeoff = null;
@@ -1800,16 +1824,23 @@ function applyResolvedJumps(
     frame = events.touchdown;
     multiJumpPanel.hidden = true;
     const flagged = meta.lowConfidence || checkNotes.length > 0 || !checkMarksFlag.hidden;
-    detectStatus.textContent = (
-      flagged
-        ? "Marks set — Check marks flagged. Use Go to / Set on each event."
-        : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
-    ) + (checkNotes.length ? ` ${checkNotes.join(" ")}` : "");
-    if (jumpType === "penultimate" && marks.penTakeoff === null && !penTdBeforeClip) {
-      detectStatus.textContent += " Penultimate step not found — mark manually if visible.";
-      setCheckMarksFlag(true, "Check marks — penultimate step not found. Mark TD/TO manually.");
-    } else if (jumpType === "penultimate" && penTdBeforeClip) {
-      detectStatus.textContent += " Penultimate TD started before clip.";
+    if (approach) {
+      detectStatus.textContent =
+        "Auto marks set. Plant touchdown is a suggestion — scrub to the true plant TD and tap Set (metrics update instantly). Same Set / −1 / +1 controls as drop/depth." +
+        (checkNotes.length ? ` ${checkNotes.join(" ")}` : "");
+      if (jumpType === "penultimate" && marks.penTakeoff === null && !penTdBeforeClip) {
+        detectStatus.textContent += " Penultimate toe-off not found — mark with Set if visible.";
+        setCheckMarksFlag(true, "Check marks — penultimate step not found. Mark TD/TO manually.");
+      } else if (jumpType === "penultimate" && penTdBeforeClip) {
+        detectStatus.textContent +=
+          " Penultimate contact left blank (TD before clip). Set penultimate toe-off if you can see it.";
+      }
+    } else {
+      detectStatus.textContent = (
+        flagged
+          ? "Marks set — Check marks flagged. Use Go to / Set on each event."
+          : "Auto marks set. Check each one with Go to, step to the right frame, and press Set to correct it."
+      ) + (checkNotes.length ? ` ${checkNotes.join(" ")}` : "");
     }
     refreshJumpOverlay();
     return;
@@ -2063,6 +2094,8 @@ function bindMark(
   must<HTMLButtonElement>(setSelector).addEventListener("click", () => {
     if (!ready) return;
     marks[key] = frame;
+    // Manual pen TD means the athlete's contact is visible — clear "before clip".
+    if (key === "penTouchdown") penTdBeforeClip = false;
     clearFeedback();
     render();
   });
@@ -2076,6 +2109,21 @@ function bindMark(
     clearFeedback();
     render();
   });
+}
+
+/** ±1 frame nudge on a mark — same instant recompute path as Set. */
+function nudgeMark(key: keyof typeof marks, delta: number): void {
+  if (!ready) return;
+  const cur = marks[key];
+  if (cur === null) return;
+  const count = seeker.frameCount;
+  const next = count > 0 ? clampFrame(cur + delta, count) : Math.max(0, cur + delta);
+  marks[key] = next;
+  if (key === "penTouchdown") penTdBeforeClip = false;
+  frame = next;
+  clearFeedback();
+  render();
+  seeker.request(frame);
 }
 
 function render(): void {
@@ -2108,13 +2156,50 @@ function render(): void {
     must<HTMLElement>("#pen-td-frame").textContent = "— (started before clip)";
     must<HTMLButtonElement>("#goto-pen-td").disabled = true;
     must<HTMLButtonElement>("#clear-pen-td").disabled = true;
+    must<HTMLButtonElement>("#nudge-pen-td-minus").disabled = true;
+    must<HTMLButtonElement>("#nudge-pen-td-plus").disabled = true;
   } else {
-    renderMark(marks.penTouchdown, "#pen-td-frame", "#goto-pen-td", "#clear-pen-td");
+    renderMark(
+      marks.penTouchdown,
+      "#pen-td-frame",
+      "#goto-pen-td",
+      "#clear-pen-td",
+      "#nudge-pen-td-minus",
+      "#nudge-pen-td-plus",
+    );
   }
-  renderMark(marks.penTakeoff, "#pen-to-frame", "#goto-pen-to", "#clear-pen-to");
-  renderMark(marks.touchdown, "#td-frame", "#goto-td", "#clear-td");
-  renderMark(marks.takeoff, "#to-frame", "#goto-to", "#clear-to");
-  renderMark(marks.landing, "#ld-frame", "#goto-ld", "#clear-ld");
+  renderMark(
+    marks.penTakeoff,
+    "#pen-to-frame",
+    "#goto-pen-to",
+    "#clear-pen-to",
+    "#nudge-pen-to-minus",
+    "#nudge-pen-to-plus",
+  );
+  renderMark(
+    marks.touchdown,
+    "#td-frame",
+    "#goto-td",
+    "#clear-td",
+    "#nudge-td-minus",
+    "#nudge-td-plus",
+  );
+  renderMark(
+    marks.takeoff,
+    "#to-frame",
+    "#goto-to",
+    "#clear-to",
+    "#nudge-to-minus",
+    "#nudge-to-plus",
+  );
+  renderMark(
+    marks.landing,
+    "#ld-frame",
+    "#goto-ld",
+    "#clear-ld",
+    "#nudge-ld-minus",
+    "#nudge-ld-plus",
+  );
   placePip("#mark-td", marks.touchdown, count);
   placePip("#mark-to", marks.takeoff, count);
   placePip("#mark-ld", marks.landing, count);
@@ -2605,10 +2690,14 @@ function renderMark(
   labelSelector: string,
   gotoSelector: string,
   clearSelector: string,
+  nudgeMinusSelector?: string,
+  nudgePlusSelector?: string,
 ): void {
   must<HTMLElement>(labelSelector).textContent = value === null ? "Not set" : `Frame ${value}`;
   must<HTMLButtonElement>(gotoSelector).disabled = value === null;
   must<HTMLButtonElement>(clearSelector).disabled = value === null;
+  if (nudgeMinusSelector) must<HTMLButtonElement>(nudgeMinusSelector).disabled = value === null || !ready;
+  if (nudgePlusSelector) must<HTMLButtonElement>(nudgePlusSelector).disabled = value === null || !ready;
 }
 
 function placePip(selector: string, value: number | null, count: number): void {
@@ -2962,7 +3051,24 @@ function setTransportEnabled(enabled: boolean): void {
   scrubber.disabled = !enabled;
   autoButton.disabled = !enabled;
   cadenceButton.disabled = !enabled;
-  for (const id of ["#set-so", "#set-pen-td", "#set-pen-to", "#set-td", "#set-to", "#set-ld"]) {
+  for (const id of [
+    "#set-so",
+    "#set-pen-td",
+    "#set-pen-to",
+    "#set-td",
+    "#set-to",
+    "#set-ld",
+    "#nudge-pen-td-minus",
+    "#nudge-pen-td-plus",
+    "#nudge-pen-to-minus",
+    "#nudge-pen-to-plus",
+    "#nudge-td-minus",
+    "#nudge-td-plus",
+    "#nudge-to-minus",
+    "#nudge-to-plus",
+    "#nudge-ld-minus",
+    "#nudge-ld-plus",
+  ]) {
     must<HTMLButtonElement>(id).disabled = !enabled;
   }
 }

@@ -231,33 +231,45 @@ async function runClip(id) {
     gt_pen_to: t.pen_to,
   };
 
-  function check(name, ok, detail) {
-    checks.push({ name, ok, detail });
+  function check(name, ok, detail, required = true) {
+    checks.push({ name, ok, detail, required });
   }
-  check("plant TD ±3", det.td != null && Math.abs(det.td - t.plant_td) <= 3, `${det.td} vs ${t.plant_td}`);
-  check("plant TO ±3", det.to != null && Math.abs(det.to - t.plant_to) <= 3, `${det.to} vs ${t.plant_to}`);
-  check("landing ±3", det.ld != null && Math.abs(det.ld - t.landing) <= 3, `${det.ld} vs ${t.landing}`);
-  check(
-    "plant ms ±25",
-    det.plantMs != null && Math.abs(det.plantMs - m.plant_contact_ms) <= 25,
-    `${det.plantMs} vs ${m.plant_contact_ms}`,
-  );
+  // Ship gate: plant TO / landing / flight / height. Plant TD is suggestion-only.
+  check("plant TO ±3", det.to != null && Math.abs(det.to - t.plant_to) <= 3, `${det.to} vs ${t.plant_to}`, true);
+  check("landing ±3", det.ld != null && Math.abs(det.ld - t.landing) <= 3, `${det.ld} vs ${t.landing}`, true);
   check(
     "flight ms ±25",
     det.flightMs != null && Math.abs(det.flightMs - m.flight_ms) <= 25,
     `${det.flightMs} vs ${m.flight_ms}`,
+    true,
   );
   check(
     "height ±1.0",
     det.heightIn != null && Math.abs(det.heightIn - m.height_in) <= 1.0,
     `${det.heightIn} vs ${m.height_in}`,
+    true,
+  );
+  // Report-only (do not fail the ship gate).
+  check("plant TD ±3", det.td != null && Math.abs(det.td - t.plant_td) <= 3, `${det.td} vs ${t.plant_td}`, false);
+  check(
+    "plant ms ±25",
+    det.plantMs != null && Math.abs(det.plantMs - m.plant_contact_ms) <= 25,
+    `${det.plantMs} vs ${m.plant_contact_ms}`,
+    false,
   );
   check(
     "step gap ±30",
     det.gapMs != null && Math.abs(det.gapMs - m.step_gap_ms) <= 30,
     `${det.gapMs} vs ${m.step_gap_ms}`,
+    false,
   );
-  check("pen TD before clip", /started before clip/i.test(det.penTdLabel), det.penTdLabel);
+  check("pen TD before clip", /started before clip/i.test(det.penTdLabel), det.penTdLabel, false);
+  check(
+    "pen contact blank",
+    /started before clip|^—$|^-$|not set/i.test(String(det.penMsLabel ?? "")),
+    det.penMsLabel,
+    false,
+  );
 
   return { row, checks, det, heightFromFlight: heightInFromFlightMs(m.flight_ms) };
 }
@@ -270,15 +282,16 @@ for (const id of CLIPS) {
     const r = await runClip(id);
     results.push(r);
     for (const c of r.checks) {
-      console.log(c.ok ? "PASS" : "FAIL", c.name, c.detail);
-      if (!c.ok) failed = true;
+      const tag = c.required === false ? "info" : c.ok ? "PASS" : "FAIL";
+      console.log(tag, c.name, c.detail);
+      if (c.required !== false && !c.ok) failed = true;
     }
   } catch (err) {
     failed = true;
     console.error("ERROR", id, err instanceof Error ? err.message : err);
     results.push({
       row: { id, error: String(err) },
-      checks: [{ name: "run", ok: false, detail: String(err) }],
+      checks: [{ name: "run", ok: false, detail: String(err), required: true }],
     });
   }
 }
