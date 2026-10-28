@@ -3,6 +3,8 @@ import type { KeyValueStore, TrialRecord } from "./storage.ts";
 
 export const GITHUB_TOKEN_KEY = "jumpLab.githubToken.v1";
 export const GITHUB_SYNC_META_KEY = "jumpLab.githubSyncMeta.v1";
+/** Local tombstones for jumps the user explicitly deleted (survives across syncs). */
+export const GITHUB_DELETED_IDS_KEY = "jumpLab.githubDeletedIds.v1";
 export const GITHUB_REPO = "kellybyron2222-dev/VerticalJumpAnalysis";
 export const GITHUB_DATA_BRANCH = "data";
 export const GITHUB_CSV_PATH = "data/jump-log.csv";
@@ -23,6 +25,8 @@ export interface GitHubFetch {
 export interface RemoteLogPayload {
   trials: TrialRecord[];
   updatedAt: string;
+  /** Explicit deletes — stale clients must never wipe remote rows by omission. */
+  deletedIds?: string[];
 }
 
 export function loadGithubToken(storage: KeyValueStore): string {
@@ -78,6 +82,47 @@ export function markDirty(storage: KeyValueStore): void {
   saveSyncMeta(storage, { ...meta, dirty: true, lastError: null });
 }
 
+export function loadDeletedIds(storage: KeyValueStore): string[] {
+  try {
+    const raw = storage.getItem(GITHUB_DELETED_IDS_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw) as unknown;
+    if (!Array.isArray(data)) return [];
+    return [
+      ...new Set(
+        data.filter((id): id is string => typeof id === "string" && id.length > 0),
+      ),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+export function saveDeletedIds(storage: KeyValueStore, ids: readonly string[]): boolean {
+  try {
+    const unique = [...new Set(ids.filter((id) => typeof id === "string" && id.length > 0))];
+    storage.setItem(GITHUB_DELETED_IDS_KEY, JSON.stringify(unique));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Record an explicit delete so sync will not resurrect the row from remote. */
+export function markDeleted(storage: KeyValueStore, id: string): void {
+  if (!id) return;
+  const next = new Set(loadDeletedIds(storage));
+  next.add(id);
+  saveDeletedIds(storage, [...next]);
+}
+
+export function mergeDeletedIds(
+  local: readonly string[],
+  remote: readonly string[],
+): string[] {
+  return [...new Set([...remote, ...local].filter((id) => id.length > 0))].sort();
+}
+
 /**
  * Merge local and remote trials by id. Same id keeps the record with the later
  * createdAt (tie → local). Remote-only ids restore a cleared phone.
@@ -98,6 +143,16 @@ export function mergeTrials(
   return [...map.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 }
 
+/** Drop trials whose ids appear in the tombstone set. */
+export function applyTombstones(
+  trials: readonly TrialRecord[],
+  deletedIds: readonly string[],
+): TrialRecord[] {
+  if (deletedIds.length === 0) return [...trials];
+  const dead = new Set(deletedIds);
+  return trials.filter((t) => !dead.has(t.id));
+}
+
 /** Stable fingerprint so we can detect saves/deletes during an in-flight push. */
 export function trialsFingerprint(trials: readonly TrialRecord[]): string {
   return [...trials]
@@ -106,20 +161,46 @@ export function trialsFingerprint(trials: readonly TrialRecord[]): string {
     .join("|");
 }
 
-export function trialsToRemoteJson(trials: readonly TrialRecord[], updatedAt = new Date().toISOString()): string {
-  const payload: RemoteLogPayload = { trials: [...trials], updatedAt };
+export function deletedIdsFingerprint(ids: readonly string[]): string {
+  return [...ids].sort().join(",");
+}
+
+export function trialsToRemoteJson(
+  trials: readonly TrialRecord[],
+  updatedAt = new Date().toISOString(),
+  deletedIds: readonly string[] = [],
+): string {
+  const payload: RemoteLogPayload = {
+    trials: [...trials],
+    updatedAt,
+    deletedIds: [...deletedIds],
+  };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }
 
-export function parseRemoteJson(text: string): TrialRecord[] {
+export function parseRemotePayload(text: string): {
+  trials: TrialRecord[];
+  deletedIds: string[];
+} {
   try {
     const data = JSON.parse(text) as Partial<RemoteLogPayload> | TrialRecord[];
-    if (Array.isArray(data)) return data.filter(isLooseTrial);
-    if (data && Array.isArray(data.trials)) return data.trials.filter(isLooseTrial);
-    return [];
+    if (Array.isArray(data)) {
+      return { trials: data.filter(isLooseTrial), deletedIds: [] };
+    }
+    if (data && Array.isArray(data.trials)) {
+      const deletedIds = Array.isArray(data.deletedIds)
+        ? data.deletedIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+        : [];
+      return { trials: data.trials.filter(isLooseTrial), deletedIds };
+    }
+    return { trials: [], deletedIds: [] };
   } catch {
-    return [];
+    return { trials: [], deletedIds: [] };
   }
+}
+
+export function parseRemoteJson(text: string): TrialRecord[] {
+  return parseRemotePayload(text).trials;
 }
 
 function isLooseTrial(value: unknown): value is TrialRecord {
@@ -128,7 +209,10 @@ function isLooseTrial(value: unknown): value is TrialRecord {
   return (
     typeof t.id === "string" &&
     typeof t.createdAt === "string" &&
-    (t.jumpType === "drop" || t.jumpType === "depth") &&
+    (t.jumpType === "drop" ||
+      t.jumpType === "depth" ||
+      t.jumpType === "oneStep" ||
+      t.jumpType === "penultimate") &&
     typeof t.boxHeightIn === "number" &&
     typeof t.gctMs === "number" &&
     typeof t.heightIn === "number" &&
@@ -262,10 +346,9 @@ export interface SyncGithubResult {
 }
 
 /**
- * GitHub `data` branch is the source of truth. localStorage is a cache/outbox:
- * - dirty (or healing an empty remote): push the local log as the full file
- * - clean: adopt remote into the cache
- * Re-reads local immediately before PUT so a save mid-flight is included.
+ * GitHub `data` branch is the source of truth. localStorage is a cache/outbox.
+ * Every sync fetches remote first, unions trials by id, and unions deletedIds
+ * tombstones — a stale tab can never drop remote-only rows by omission.
  * Never logs the token.
  */
 export async function syncGithubLog(options: {
@@ -290,30 +373,36 @@ export async function syncGithubLog(options: {
 
   try {
     await ensureDataBranch(token, fetchImpl);
-    const remoteFile = await getFile(token, GITHUB_JSON_PATH, fetchImpl);
-    const remoteTrials = parseRemoteJson(remoteFile.text);
-    const meta = loadSyncMeta(options.storage);
+    let remoteFile = await getFile(token, GITHUB_JSON_PATH, fetchImpl);
+    let remotePayload = parseRemotePayload(remoteFile.text);
     const localBefore = options.getLocalTrials();
-    const healEmptyRemote = remoteTrials.length === 0 && localBefore.length > 0;
-    const localIsAuthority = meta.dirty || healEmptyRemote;
+    const localDeleted = loadDeletedIds(options.storage);
 
-    let toPush = localIsAuthority ? [...localBefore] : [...remoteTrials];
-    const pulled = localIsAuthority
-      ? 0
-      : Math.max(0, remoteTrials.filter((r) => !localBefore.some((l) => l.id === r.id)).length);
+    const buildMerged = (local: readonly TrialRecord[], deletedLocal: readonly string[]) => {
+      const deletedIds = mergeDeletedIds(deletedLocal, remotePayload.deletedIds);
+      const merged = applyTombstones(mergeTrials(local, remotePayload.trials), deletedIds);
+      return { merged, deletedIds };
+    };
+
+    let { merged: toPush, deletedIds: deletedToPush } = buildMerged(localBefore, localDeleted);
+    const pulled = Math.max(
+      0,
+      toPush.filter((r) => !localBefore.some((l) => l.id === r.id)).length,
+    );
 
     let attempt = 0;
     let csvSha = (await getFile(token, GITHUB_CSV_PATH, fetchImpl)).sha;
     let jsonSha = remoteFile.sha;
     while (attempt <= maxRetries) {
       try {
-        // Re-read outbox immediately before encoding so mid-sync saves are included.
-        if (localIsAuthority || loadSyncMeta(options.storage).dirty) {
-          toPush = [...options.getLocalTrials()];
-        }
+        // Re-read outbox immediately before encoding so mid-sync saves/deletes are included.
+        const latestLocal = options.getLocalTrials();
+        const latestDeleted = loadDeletedIds(options.storage);
+        ({ merged: toPush, deletedIds: deletedToPush } = buildMerged(latestLocal, latestDeleted));
+
         const updatedAt = new Date().toISOString();
         const csv = buildCsvText(toPush);
-        const json = trialsToRemoteJson(toPush, updatedAt);
+        const json = trialsToRemoteJson(toPush, updatedAt, deletedToPush);
         jsonSha = (await putFile(
           token,
           GITHUB_JSON_PATH,
@@ -331,10 +420,13 @@ export async function syncGithubLog(options: {
           fetchImpl,
         )) ?? csvSha;
 
-        const latest = options.getLocalTrials();
+        const afterLocal = options.getLocalTrials();
+        const afterDeleted = loadDeletedIds(options.storage);
         const changedDuringPush =
-          localIsAuthority && trialsFingerprint(latest) !== trialsFingerprint(toPush);
+          trialsFingerprint(afterLocal) !== trialsFingerprint(latestLocal) ||
+          deletedIdsFingerprint(afterDeleted) !== deletedIdsFingerprint(latestDeleted);
         if (changedDuringPush) {
+          saveDeletedIds(options.storage, deletedToPush);
           saveSyncMeta(options.storage, {
             dirty: true,
             lastSyncedAt: updatedAt,
@@ -342,13 +434,17 @@ export async function syncGithubLog(options: {
             mergedOnce: true,
           });
           return {
-            merged: [...latest],
+            merged: applyTombstones(
+              mergeTrials(afterLocal, remotePayload.trials),
+              mergeDeletedIds(afterDeleted, remotePayload.deletedIds),
+            ),
             pulled,
             pushed: true,
             needsRepush: true,
           };
         }
 
+        saveDeletedIds(options.storage, deletedToPush);
         saveSyncMeta(options.storage, {
           dirty: false,
           lastSyncedAt: updatedAt,
@@ -364,8 +460,11 @@ export async function syncGithubLog(options: {
       } catch (error) {
         attempt += 1;
         if (attempt > maxRetries) throw error;
+        // Remote may have moved — re-fetch so the next merge sees the latest tip.
+        remoteFile = await getFile(token, GITHUB_JSON_PATH, fetchImpl);
+        remotePayload = parseRemotePayload(remoteFile.text);
         csvSha = (await getFile(token, GITHUB_CSV_PATH, fetchImpl)).sha;
-        jsonSha = (await getFile(token, GITHUB_JSON_PATH, fetchImpl)).sha;
+        jsonSha = remoteFile.sha;
       }
     }
     return {
