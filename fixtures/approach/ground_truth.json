@@ -1,0 +1,233 @@
+{
+ "clip0": {
+  "file": "/workspace/uploads/approach/clip0.mov",
+  "source": "IMG_pen.mov (IMG_0403)",
+  "small_file": "/workspace/uploads/approach/clip0_small.mp4",
+  "type": "penultimate (two-step approach, two-foot takeoff)",
+  "decoded_frames": 430,
+  "fps_estimate": {
+   "median_real_fps": 240,
+   "mean_real_fps": 170,
+   "note": "VFR: media frame spacing alternates 1/60 and 1/30 s -> real 240/120 fps"
+  },
+  "frames": {
+   "pen_td": 67,
+   "pen_to": 80,
+   "plant_td": 112,
+   "plant2_td": 128,
+   "plant_to": 170,
+   "landing": 290
+  },
+  "real_time_ms": {
+   "pen_td": 391.7,
+   "pen_to": 475.0,
+   "plant_td": 654.2,
+   "plant2_td": 758.8,
+   "plant_to": 1012.9,
+   "landing": 1705.0
+  },
+  "metrics": {
+   "pen_contact_ms_lower_bound": 83.3,
+   "step_gap_ms": 179.2,
+   "plant_contact_ms": 358.7,
+   "second_foot_contact_ms": 254.1,
+   "flight_ms": 692.1,
+   "height_in": 23.13,
+   "plant_rsi": 1.64
+  },
+  "confidence": {
+   "pen_td": "low: athlete enters frame mid-contact, TD not visible",
+   "pen_to": "medium (+/-3 fr)",
+   "plant_td": "medium (+/-2 fr)",
+   "plant_to": "high (+/-1 fr)",
+   "landing": "medium-high (+/-2 fr)"
+  },
+  "notes": "Frame indices are decoded-frame indices (ffmpeg -fps_mode passthrough, 0-based). plant_td = lead (first) foot heel strike; plant2_td = trailing foot joins; both feet leave at plant_to. MediaPipe heavy swaps L/R foot labels at plant2_td."
+ },
+ "clip2": {
+  "file": "/workspace/uploads/approach/clip2.mov",
+  "source": "01M5ZVHTVXSA5HKWSAQZGDNZQB.mov",
+  "small_file": "/workspace/uploads/approach/clip2_small.mp4",
+  "type": "penultimate (two-step approach, two-foot takeoff)",
+  "decoded_frames": 579,
+  "fps_estimate": {
+   "median_real_fps": 240,
+   "mean_real_fps": 171,
+   "note": "VFR: media frame spacing alternates 1/60 and 1/30 s -> real 240/120 fps"
+  },
+  "frames": {
+   "pen_td": 27,
+   "pen_to": 42,
+   "plant_td": 68,
+   "plant2_td": 88,
+   "plant_to": 128,
+   "landing": 244
+  },
+  "real_time_ms": {
+   "pen_td": 162.5,
+   "pen_to": 241.7,
+   "plant_td": 400.0,
+   "plant2_td": 512.5,
+   "plant_to": 750.4,
+   "landing": 1433.8
+  },
+  "metrics": {
+   "pen_contact_ms_lower_bound": 79.2,
+   "step_gap_ms": 158.3,
+   "plant_contact_ms": 350.4,
+   "second_foot_contact_ms": 237.9,
+   "flight_ms": 683.4,
+   "height_in": 22.55,
+   "plant_rsi": 1.63
+  },
+  "confidence": {
+   "pen_td": "low: athlete enters frame mid-contact, TD not visible",
+   "pen_to": "medium (+/-3 fr)",
+   "plant_td": "medium (+/-2 fr)",
+   "plant_to": "high (+/-1 fr)",
+   "landing": "medium-high (+/-2 fr)"
+  },
+  "notes": "Frame indices are decoded-frame indices (ffmpeg -fps_mode passthrough, 0-based). plant_td = lead (first) foot heel strike; plant2_td = trailing foot joins; both feet leave at plant_to. MediaPipe heavy swaps L/R foot labels at plant2_td."
+ },
+ "clip3": {
+  "file": "/workspace/uploads/approach/clip3.mov",
+  "source": "01M5ZVJ0HQ1V9S2A742JMEGPNP.mov",
+  "small_file": "/workspace/uploads/approach/clip3_small.mp4",
+  "type": "penultimate (two-step approach, two-foot takeoff)",
+  "decoded_frames": 334,
+  "fps_estimate": {
+   "median_real_fps": 240,
+   "mean_real_fps": 172,
+   "note": "VFR: media frame spacing alternates 1/60 and 1/30 s -> real 240/120 fps"
+  },
+  "frames": {
+   "pen_td": 9,
+   "pen_to": 25,
+   "plant_td": 55,
+   "plant2_td": 79,
+   "plant_to": 112,
+   "landing": 228
+  },
+  "real_time_ms": {
+   "pen_td": 50.0,
+   "pen_to": 141.7,
+   "plant_td": 325.0,
+   "plant2_td": 470.8,
+   "plant_to": 650.4,
+   "landing": 1325.4
+  },
+  "metrics": {
+   "pen_contact_ms_lower_bound": 91.7,
+   "step_gap_ms": 183.3,
+   "plant_contact_ms": 325.4,
+   "second_foot_contact_ms": 179.6,
+   "flight_ms": 675.0,
+   "height_in": 22.0,
+   "plant_rsi": 1.72
+  },
+  "confidence": {
+   "pen_td": "low: athlete enters frame mid-contact, TD not visible",
+   "pen_to": "medium (+/-3 fr)",
+   "plant_td": "medium (+/-2 fr)",
+   "plant_to": "high (+/-1 fr)",
+   "landing": "medium-high (+/-2 fr)"
+  },
+  "notes": "Frame indices are decoded-frame indices (ffmpeg -fps_mode passthrough, 0-based). plant_td = lead (first) foot heel strike; plant2_td = trailing foot joins; both feet leave at plant_to. MediaPipe heavy swaps L/R foot labels at plant2_td."
+ },
+ "clip4": {
+  "file": "/workspace/uploads/approach/clip4.mov",
+  "source": "01M5ZVJB6MW4P8K5ZGDSD1TB3G.mov",
+  "small_file": "/workspace/uploads/approach/clip4_small.mp4",
+  "type": "penultimate (two-step approach, two-foot takeoff)",
+  "decoded_frames": 297,
+  "fps_estimate": {
+   "median_real_fps": 240,
+   "mean_real_fps": 171,
+   "note": "VFR: media frame spacing alternates 1/60 and 1/30 s -> real 240/120 fps"
+  },
+  "frames": {
+   "pen_td": 18,
+   "pen_to": 29,
+   "plant_td": 62,
+   "plant2_td": 89,
+   "plant_to": 119,
+   "landing": 235
+  },
+  "real_time_ms": {
+   "pen_td": 100.0,
+   "pen_to": 170.8,
+   "plant_td": 358.8,
+   "plant2_td": 525.4,
+   "plant_to": 696.2,
+   "landing": 1371.7
+  },
+  "metrics": {
+   "pen_contact_ms_lower_bound": 70.8,
+   "step_gap_ms": 188.0,
+   "plant_contact_ms": 337.4,
+   "second_foot_contact_ms": 170.8,
+   "flight_ms": 675.5,
+   "height_in": 22.03,
+   "plant_rsi": 1.66
+  },
+  "confidence": {
+   "pen_td": "low: athlete enters frame mid-contact, TD not visible",
+   "pen_to": "medium (+/-3 fr)",
+   "plant_td": "medium (+/-2 fr)",
+   "plant_to": "high (+/-1 fr)",
+   "landing": "medium-high (+/-2 fr)"
+  },
+  "notes": "Frame indices are decoded-frame indices (ffmpeg -fps_mode passthrough, 0-based). plant_td = lead (first) foot heel strike; plant2_td = trailing foot joins; both feet leave at plant_to. MediaPipe heavy swaps L/R foot labels at plant2_td."
+ },
+ "clip5": {
+  "file": "/workspace/uploads/approach/clip5.mov",
+  "source": "01M5ZVJGSFHR1XZX2HB3Z7KJRE.mov",
+  "small_file": "/workspace/uploads/approach/clip5_small.mp4",
+  "type": "penultimate (two-step approach, two-foot takeoff)",
+  "decoded_frames": 387,
+  "fps_estimate": {
+   "median_real_fps": 240,
+   "mean_real_fps": 170,
+   "note": "VFR: media frame spacing alternates 1/60 and 1/30 s -> real 240/120 fps"
+  },
+  "frames": {
+   "pen_td": 17,
+   "pen_to": 37,
+   "plant_td": 63,
+   "plant2_td": 95,
+   "plant_to": 118,
+   "landing": 232
+  },
+  "real_time_ms": {
+   "pen_td": 92.1,
+   "pen_to": 212.9,
+   "plant_td": 371.2,
+   "plant2_td": 567.1,
+   "plant_to": 704.6,
+   "landing": 1363.3
+  },
+  "metrics": {
+   "pen_contact_ms_lower_bound": 120.8,
+   "step_gap_ms": 158.3,
+   "plant_contact_ms": 333.4,
+   "second_foot_contact_ms": 137.5,
+   "flight_ms": 658.7,
+   "height_in": 20.95,
+   "plant_rsi": 1.6
+  },
+  "confidence": {
+   "pen_td": "low: athlete enters frame mid-contact, TD not visible",
+   "pen_to": "medium (+/-3 fr)",
+   "plant_td": "medium (+/-2 fr)",
+   "plant_to": "high (+/-1 fr)",
+   "landing": "medium-high (+/-2 fr)"
+  },
+  "notes": "Frame indices are decoded-frame indices (ffmpeg -fps_mode passthrough, 0-based). plant_td = lead (first) foot heel strike; plant2_td = trailing foot joins; both feet leave at plant_to. MediaPipe heavy swaps L/R foot labels at plant2_td."
+ },
+ "clip1": {
+  "file": "/workspace/uploads/approach/clip1.mov",
+  "source": "01M5ZVHM3SGFWZV55ZT5WT0MN3.mov",
+  "duplicate_of": "clip0",
+  "notes": "Byte-identical (same md5) to IMG_pen.mov / IMG_0403; use clip0 results."
+ }
+}

@@ -757,20 +757,35 @@ video {
 }
 
 .mark-actions {
-  display: grid;
-  grid-template-columns: 1.2fr 1fr auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
+  justify-content: flex-end;
 }
 
 .mark-actions button {
   padding: 0.55rem 0.7rem;
   background: var(--ink);
   color: #f6f3ea;
+  min-width: 2.6rem;
+}
+
+.mark-actions .mark-nudge {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  min-width: 2.4rem;
 }
 
 .mark-actions .text-button {
   background: transparent;
   color: var(--ink);
+}
+
+.mark-hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 form {
