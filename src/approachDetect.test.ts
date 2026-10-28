@@ -44,26 +44,20 @@ describe("detectApproachFromPose", () => {
     expect(result!.flightMs!).toBeGreaterThan(500);
   });
 
-  it("does not use L/R labels — swapped feet still yield same plant", () => {
+  it("ignores L/R identity — footY any-foot signal alone is enough", () => {
     const { samples, timing } = clipLikeApproach();
-    // Add swapped L/R that would fool identity-based refine; keep footY as any-foot max.
-    const swapped = samples.map((s) => {
-      const on = s.footY >= 0.9;
-      return {
-        ...s,
-        footY: s.footY,
-        leftFootY: on ? 0.94 : 0.7,
-        rightFootY: on ? 0.7 : 0.94,
-        leftHeelY: on ? 0.94 : 0.7,
-        rightHeelY: on ? 0.7 : 0.94,
-      };
-    });
-    const result = detectApproachFromPose(swapped, timing);
+    // Only combined footY (no L/R) — must still detect plant.
+    const combinedOnly = samples.map((s) => ({
+      frame: s.frame,
+      footY: s.footY,
+      heelY: s.heelY,
+    }));
+    const result = detectApproachFromPose(combinedOnly, timing);
     expect(result).not.toBeNull();
-    // Label-agnostic path must still find the same flight; TD may refine via loose heel.
+    expect(result!.touchdown).toBe(112);
     expect(result!.takeoff).toBe(170);
     expect(result!.landing).toBe(290);
-    expect(result!.touchdown).toBeGreaterThanOrEqual(100);
-    expect(result!.touchdown).toBeLessThan(170);
+    expect(result!.penTdBeforeClip).toBe(true);
+    expect(result!.penTakeoff).toBe(80);
   });
 });
