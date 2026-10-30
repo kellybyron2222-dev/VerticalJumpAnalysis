@@ -171,10 +171,22 @@ function quantile(values: readonly number[], q: number): number {
   return sorted[index]!;
 }
 
+/**
+ * Lowest contact point for drop/depth floor tests. Prefers toe tip when
+ * visible so heel-rise (toes still planted) does not count as takeoff.
+ */
+export function contactFloorY(sample: FootSample): number {
+  let y = sample.footY;
+  for (const toe of [sample.leftToeY, sample.rightToeY]) {
+    if (toe !== undefined && Number.isFinite(toe) && toe > y) y = toe;
+  }
+  return y;
+}
+
 export function groundModel(samples: readonly FootSample[]): GroundModel | null {
   const ordered = sortedSamples(samples);
   if (ordered.length < MIN_SAMPLES) return null;
-  const ys = ordered.map((sample) => sample.footY);
+  const ys = ordered.map((sample) => contactFloorY(sample));
   const tailStart = Math.floor(ys.length * 0.35);
   const floorSource = ys.length - tailStart >= 6 ? ys.slice(tailStart) : ys;
   const ground = quantile(floorSource, 0.9);
@@ -227,7 +239,61 @@ function findStepOffInRange(
 }
 
 function buildOnGround(ordered: readonly FootSample[], model: GroundModel): boolean[] {
-  return ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
+  return ordered.map((sample) => contactFloorY(sample) >= model.ground - model.tolerance);
+}
+
+/**
+ * Snap drop/depth TO/LD onto toe-inclusive floor contact:
+ * - takeoff = first airborne frame after the plant (last toe/foot still on floor just before)
+ * - landing = FIRST return to floor after takeoff (never a later bounce/still)
+ */
+export function snapDropTakeoffLanding(
+  samples: readonly FootSample[],
+  model: GroundModel,
+  events: DetectedEvents,
+): DetectedEvents {
+  const ordered = sortedSamples(samples);
+  if (ordered.length < MIN_SAMPLES) return events;
+  const onGround = buildOnGround(ordered, model);
+  const { nextContact, nextAir } = contactHelpers(ordered, onGround, DEFAULT_MIN_AIR);
+
+  let tdIndex = ordered.findIndex((s) => s.frame >= events.touchdown);
+  if (tdIndex < 0) tdIndex = 0;
+  // Walk TD to the start of its contact run when already on floor.
+  while (tdIndex > 0 && onGround[tdIndex] && onGround[tdIndex - 1]) tdIndex -= 1;
+  if (!onGround[tdIndex]) {
+    tdIndex = nextContact(tdIndex);
+    if (tdIndex >= ordered.length) return events;
+  }
+
+  let toIndex = nextAir(tdIndex);
+  if (toIndex >= ordered.length) return events;
+  // Prefer the last on-floor frame as toe-off when the helper landed on first air.
+  if (toIndex > 0 && !onGround[toIndex] && onGround[toIndex - 1]) {
+    // keep first air index — matches existing mark convention / tests
+  } else if (toIndex > 0 && onGround[toIndex]) {
+    toIndex = nextAir(toIndex);
+    if (toIndex >= ordered.length) return events;
+  }
+
+  const ldIndex = nextContact(toIndex);
+  if (ldIndex >= ordered.length) return events;
+
+  const touchdown = ordered[tdIndex]!.frame;
+  const takeoff = ordered[toIndex]!.frame;
+  const landing = ordered[ldIndex]!.frame;
+  if (!(touchdown < takeoff && takeoff < landing)) return events;
+
+  return {
+    ...events,
+    touchdown,
+    takeoff,
+    landing,
+    stepOff:
+      events.stepOff != null && events.stepOff < touchdown
+        ? events.stepOff
+        : findStepOffInRange(ordered, tdIndex, 0, model.ground),
+  };
 }
 
 function hipRange(ordered: readonly FootSample[]): { min: number | null; max: number | null } {
@@ -248,12 +314,12 @@ function scoreCandidate(
   const takeoff = ordered[toIndex]!.frame;
   const landing = ordered[ldIndex]!.frame;
   const scored = scoreJumpCycle(touchdown, takeoff, landing);
-  const toY = ordered[toIndex]!.footY;
+  const toY = contactFloorY(ordered[toIndex]!);
   const fromFloor = toY >= model.ground - model.tolerance * 2 ? 10 : 0;
   let minY = 1;
   let maxY = 0;
   for (let k = toIndex; k <= ldIndex; k += 1) {
-    const y = ordered[k]!.footY;
+    const y = contactFloorY(ordered[k]!);
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
   }
@@ -291,7 +357,7 @@ export function footVerticalVelocity(
   ordered: readonly FootSample[],
   timing: FootSpeedTiming,
 ): number[] {
-  const ys = smoothFootY(ordered.map((s) => s.footY));
+  const ys = smoothFootY(ordered.map((s) => contactFloorY(s)));
   const vel = new Array<number>(ordered.length).fill(0);
   for (let i = 1; i < ordered.length; i += 1) {
     const dt = realSecondsOnClock(
@@ -533,9 +599,9 @@ export function enumerateJumpCycles(
   // touchdown = start of that contact run (survives walking → box false cycles).
   for (let toIndex = 1; toIndex < ordered.length && candidates.length < maxJumps * 2; toIndex += 1) {
     if (!onGround[toIndex - 1] || onGround[toIndex]) continue;
-    const toY = ordered[toIndex]!.footY;
+    const toY = contactFloorY(ordered[toIndex]!);
     if (toY < model.ground - model.tolerance * 2) continue; // not leaving the floor
-    // Duration of this air must look like a flight.
+    // Duration of this air must look like a flight. Landing = FIRST floor return.
     const ldIndex = nextContact(toIndex);
     if (ldIndex >= ordered.length) continue;
     if (ordered[ldIndex]!.frame - ordered[toIndex]!.frame < minAirFrames) continue;
@@ -596,7 +662,7 @@ export function detectEvents(
   };
 
   if (ranked.length === 0) {
-    const anyLeave = ordered.some((s) => s.footY < model.ground - model.tolerance);
+    const anyLeave = ordered.some((s) => contactFloorY(s) < model.ground - model.tolerance);
     return {
       ok: false,
       reason: anyLeave
@@ -610,13 +676,14 @@ export function detectEvents(
   }
 
   const best = ranked[0]!;
-  const scored = scoreJumpCycle(best.touchdown, best.takeoff, best.landing);
+  const snapped = snapDropTakeoffLanding(ordered, model, eventsFromCandidate(best));
+  const scored = scoreJumpCycle(snapped.touchdown, snapped.takeoff, snapped.landing);
 
   if (best.score >= 10) {
     return {
       ok: true,
       model,
-      events: eventsFromCandidate(best),
+      events: snapped,
       lowConfidence: false,
       diagnostics: { ...diag, rejectStage: "ok", lowConfidence: false },
     };
@@ -627,7 +694,7 @@ export function detectEvents(
     return {
       ok: true,
       model,
-      events: eventsFromCandidate(best),
+      events: snapped,
       lowConfidence: true,
       diagnostics: {
         ...diag,
@@ -739,7 +806,7 @@ export function detectAllEvents(
   for (const cand of candidates) {
     if (jumps.length >= maxJumps) break;
     if (scoreJumpCycle(cand.touchdown, cand.takeoff, cand.landing).score >= 10) {
-      jumps.push(eventsFromCandidate(cand));
+      jumps.push(snapDropTakeoffLanding(ordered, model, eventsFromCandidate(cand)));
     }
   }
 

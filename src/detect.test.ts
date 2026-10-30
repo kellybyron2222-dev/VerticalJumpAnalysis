@@ -130,6 +130,53 @@ describe("detectEvents", () => {
     expect(result.events.landing).toBe(200);
   });
 
+  it("ignores heel rise while toes stay planted (takeoff = toe-off)", () => {
+    // Heels lift ~12 frames before toes leave the floor; landing has a late still.
+    const samples: FootSample[] = [];
+    const td = 100;
+    const heelRise = 149;
+    const toeOff = 161;
+    const firstLand = 259;
+    const lateStill = 347;
+    for (let frame = 0; frame < 360; frame += 1) {
+      let footY: number; // ankle/heel
+      let toeY: number;
+      if (frame < td - 30) {
+        footY = BOX;
+        toeY = BOX + 0.02;
+      } else if (frame < td) {
+        const t = (frame - (td - 30)) / 30;
+        footY = BOX + (FLOOR - BOX) * t;
+        toeY = footY + 0.01;
+      } else if (frame < heelRise) {
+        footY = FLOOR;
+        toeY = FLOOR + 0.01;
+      } else if (frame < toeOff) {
+        footY = FLOOR - 0.06; // heel up
+        toeY = FLOOR + 0.01; // toe still down
+      } else if (frame < firstLand) {
+        const t = (frame - toeOff) / (firstLand - toeOff);
+        footY = FLOOR - 0.05 - 0.22 * 4 * t * (1 - t);
+        toeY = footY - 0.01;
+      } else if (frame < lateStill) {
+        footY = FLOOR - 0.03; // soft rebound / not fully still
+        toeY = FLOOR + 0.005;
+      } else {
+        footY = FLOOR;
+        toeY = FLOOR + 0.01;
+      }
+      samples.push({ frame, footY, leftToeY: toeY, rightToeY: toeY });
+    }
+    const result = detectEvents(samples);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.events.takeoff).toBeGreaterThanOrEqual(toeOff - 3);
+    expect(result.events.takeoff).toBeLessThanOrEqual(toeOff + 3);
+    expect(result.events.landing).toBeGreaterThanOrEqual(firstLand - 3);
+    expect(result.events.landing).toBeLessThanOrEqual(firstLand + 3);
+    expect(result.events.landing).toBeLessThan(lateStill - 20);
+  });
+
   it("finds a mid-drop jump from a hip/knee proxy signal (dark feet)", () => {
     const samples: FootSample[] = [];
     for (let frame = 0; frame < 320; frame += 1) {
