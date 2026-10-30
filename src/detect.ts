@@ -171,9 +171,23 @@ function quantile(values: readonly number[], q: number): number {
   return sorted[index]!;
 }
 
+/**
+ * Lowest contact point for drop/depth floor tests. Prefers toe tip when
+ * visible so heel-rise (toes still planted) does not count as takeoff.
+ */
+export function contactFloorY(sample: FootSample): number {
+  let y = sample.footY;
+  for (const toe of [sample.leftToeY, sample.rightToeY]) {
+    if (toe !== undefined && Number.isFinite(toe) && toe > y) y = toe;
+  }
+  return y;
+}
+
 export function groundModel(samples: readonly FootSample[]): GroundModel | null {
   const ordered = sortedSamples(samples);
   if (ordered.length < MIN_SAMPLES) return null;
+  // Keep ankle/heel footY for the shared ground model (approach detect uses this).
+  // Drop/depth toe-off uses contactFloorY via buildOnGround / snapDropTakeoffLanding.
   const ys = ordered.map((sample) => sample.footY);
   const tailStart = Math.floor(ys.length * 0.35);
   const floorSource = ys.length - tailStart >= 6 ? ys.slice(tailStart) : ys;
@@ -228,6 +242,70 @@ function findStepOffInRange(
 
 function buildOnGround(ordered: readonly FootSample[], model: GroundModel): boolean[] {
   return ordered.map((sample) => sample.footY >= model.ground - model.tolerance);
+}
+
+/**
+ * Snap drop/depth TO/LD onto toe-inclusive floor contact:
+ * - takeoff = last frame with toe/foot clearly on the floor (toe-off)
+ * - landing = FIRST sustained return to floor after takeoff (ignore 1-frame blips)
+ */
+export function snapDropTakeoffLanding(
+  samples: readonly FootSample[],
+  model: GroundModel,
+  events: DetectedEvents,
+): DetectedEvents {
+  const ordered = sortedSamples(samples);
+  if (ordered.length < MIN_SAMPLES) return events;
+  // Toe-inclusive floor for TO/LD. Use a slightly raised leave threshold so
+  // takeoff is true toe-off (not heel-rise, not sticky toe lag).
+  const leaveY = model.ground - Math.max(0.006, model.tolerance * 0.55);
+  const plantY = model.ground - model.tolerance;
+  const onFloor = ordered.map((s) => contactFloorY(s) >= leaveY);
+  const { nextContact, nextAir } = contactHelpers(ordered, onFloor, DEFAULT_MIN_AIR);
+
+  let tdIndex = ordered.findIndex((s) => s.frame >= events.touchdown);
+  if (tdIndex < 0) tdIndex = 0;
+  while (tdIndex > 0 && onFloor[tdIndex] && onFloor[tdIndex - 1]) tdIndex -= 1;
+  if (!onFloor[tdIndex]) {
+    tdIndex = nextContact(tdIndex);
+    if (tdIndex >= ordered.length) return events;
+  }
+
+  const firstAir = nextAir(tdIndex);
+  if (firstAir >= ordered.length) return events;
+  // Toe-off = last frame still at floor level (toes counted via contactFloorY).
+  let toIndex = firstAir > 0 && onFloor[firstAir - 1] ? firstAir - 1 : firstAir;
+  if (!(toIndex > tdIndex)) toIndex = firstAir;
+
+  // First sustained plant after leaving — never a later bounce/still.
+  let searchFrom = toIndex;
+  while (searchFrom < ordered.length && onFloor[searchFrom]) searchFrom += 1;
+  let ldIndex = nextContact(searchFrom);
+  while (ldIndex < ordered.length - 1) {
+    const planted =
+      contactFloorY(ordered[ldIndex]!) >= plantY &&
+      contactFloorY(ordered[ldIndex + 1]!) >= plantY &&
+      ordered[ldIndex]!.footY >= plantY;
+    if (planted) break;
+    ldIndex = nextContact(ldIndex + 1);
+  }
+  if (ldIndex >= ordered.length) return events;
+
+  const touchdown = ordered[tdIndex]!.frame;
+  const takeoff = ordered[toIndex]!.frame;
+  const landing = ordered[ldIndex]!.frame;
+  if (!(touchdown < takeoff && takeoff < landing)) return events;
+
+  return {
+    ...events,
+    touchdown,
+    takeoff,
+    landing,
+    stepOff:
+      events.stepOff != null && events.stepOff < touchdown
+        ? events.stepOff
+        : findStepOffInRange(ordered, tdIndex, 0, model.ground),
+  };
 }
 
 function hipRange(ordered: readonly FootSample[]): { min: number | null; max: number | null } {
@@ -535,7 +613,7 @@ export function enumerateJumpCycles(
     if (!onGround[toIndex - 1] || onGround[toIndex]) continue;
     const toY = ordered[toIndex]!.footY;
     if (toY < model.ground - model.tolerance * 2) continue; // not leaving the floor
-    // Duration of this air must look like a flight.
+    // Duration of this air must look like a flight. Landing = FIRST floor return.
     const ldIndex = nextContact(toIndex);
     if (ldIndex >= ordered.length) continue;
     if (ordered[ldIndex]!.frame - ordered[toIndex]!.frame < minAirFrames) continue;
@@ -610,6 +688,8 @@ export function detectEvents(
   }
 
   const best = ranked[0]!;
+  // Drop/depth callers snap TO/LD with snapDropTakeoffLanding (toe-off / first plant).
+  // Approach leaves marks untouched here so plant-TD logic stays independent.
   const scored = scoreJumpCycle(best.touchdown, best.takeoff, best.landing);
 
   if (best.score >= 10) {

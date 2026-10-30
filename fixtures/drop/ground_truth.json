@@ -1,0 +1,24 @@
+{
+  "clip6": {
+    "file": "clip6_small.mp4",
+    "type": "drop jump (6\" box), two-foot",
+    "decoded_frames": 359,
+    "frames": {
+      "td": 113,
+      "to": 161,
+      "landing": 259
+    },
+    "real_time_ms": {
+      "td": 659.6,
+      "to": 939.6,
+      "landing": 1524.2
+    },
+    "metrics": {
+      "contact_ms": 280.0,
+      "flight_ms": 584.6,
+      "height_in": 16.5,
+      "rsi": 1.5
+    },
+    "notes": "Portrait side-on; TO = toe-off not heel rise; LD = first floor return."
+  }
+}

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { coarseFrames, detectEvents, groundModel, refineFrames, type FootSample } from "./detect.ts";
+import {
+  coarseFrames,
+  detectEvents,
+  groundModel,
+  refineFrames,
+  snapDropTakeoffLanding,
+  type FootSample,
+} from "./detect.ts";
 
 const BOX = 0.7;
 const FLOOR = 0.9;
@@ -128,6 +135,56 @@ describe("detectEvents", () => {
     expect(result.events.touchdown).toBe(40);
     expect(result.events.takeoff).toBe(90);
     expect(result.events.landing).toBe(200);
+  });
+
+  it("ignores heel rise while toes stay planted (takeoff = toe-off)", () => {
+    // Heels lift ~12 frames before toes leave the floor; landing has a late still.
+    const samples: FootSample[] = [];
+    const td = 100;
+    const heelRise = 149;
+    const toeOff = 161;
+    const firstLand = 259;
+    const lateStill = 347;
+    for (let frame = 0; frame < 360; frame += 1) {
+      let footY: number; // ankle/heel
+      let toeY: number;
+      if (frame < td - 30) {
+        footY = BOX;
+        toeY = BOX + 0.02;
+      } else if (frame < td) {
+        const t = (frame - (td - 30)) / 30;
+        footY = BOX + (FLOOR - BOX) * t;
+        toeY = footY + 0.01;
+      } else if (frame < heelRise) {
+        footY = FLOOR;
+        toeY = FLOOR + 0.01;
+      } else if (frame < toeOff) {
+        footY = FLOOR - 0.06; // heel up
+        toeY = FLOOR + 0.01; // toe still down
+      } else if (frame < firstLand) {
+        const t = (frame - toeOff) / (firstLand - toeOff);
+        footY = FLOOR - 0.05 - 0.22 * 4 * t * (1 - t);
+        toeY = footY - 0.01;
+      } else if (frame < lateStill) {
+        footY = FLOOR - 0.03; // soft rebound / not fully still
+        toeY = FLOOR + 0.005;
+      } else {
+        footY = FLOOR;
+        toeY = FLOOR + 0.01;
+      }
+      samples.push({ frame, footY, leftToeY: toeY, rightToeY: toeY });
+    }
+    const result = detectEvents(samples);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const snapped = snapDropTakeoffLanding(samples, result.model, result.events);
+    // After heel-rise; near true toe-off (not the early heel-only mark).
+    expect(snapped.takeoff).toBeGreaterThan(heelRise + 5);
+    expect(snapped.takeoff).toBeGreaterThanOrEqual(toeOff - 3);
+    expect(snapped.takeoff).toBeLessThanOrEqual(toeOff + 3);
+    expect(snapped.landing).toBeGreaterThanOrEqual(firstLand - 3);
+    expect(snapped.landing).toBeLessThanOrEqual(firstLand + 3);
+    expect(snapped.landing).toBeLessThan(lateStill - 20);
   });
 
   it("finds a mid-drop jump from a hip/knee proxy signal (dark feet)", () => {

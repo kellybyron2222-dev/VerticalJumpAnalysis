@@ -39,7 +39,8 @@ const MIN_REP_HEIGHT_FRAC = 0.4;
 const MIN_DROP_FALL_S = 0.08;
 const MAX_DROP_FALL_S = 0.55;
 const FLAG_FLIGHT_S = 0.65;
-const FLAG_HEIGHT_IN = 30;
+/** Soft LD review flag — matches sanity “over 40 in” band. */
+const FLAG_HEIGHT_IN = 40;
 
 /** Soft “Check marks” band (stricter than hard gates; does not reject). */
 const CHECK_CONTACT_MIN_S = 0.1;

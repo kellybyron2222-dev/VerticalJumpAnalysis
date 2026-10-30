@@ -5,6 +5,7 @@ import {
   detectEvents,
   groundModel,
   refineFrames,
+  snapDropTakeoffLanding,
   type DetectedEvents,
   type Detection,
   type FootSample,
@@ -705,9 +706,14 @@ export async function analyzeMultiClip(
     }
   }
 
+  // Drop/depth only: toe-off takeoff + first sustained plant landing.
+  const jumps = requireDrop
+    ? resolved.jumps.map((j) => snapDropTakeoffLanding(pathSamples, jumpModel, j))
+    : resolved.jumps;
+
   return {
     ok: true,
-    jumps: resolved.jumps,
+    jumps,
     model: jumpModel,
     lowConfidence: resolved.lowConfidence || resolved.warnings.length > 0,
     diagnostics: diagBase,
