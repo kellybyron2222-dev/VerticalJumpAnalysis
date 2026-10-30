@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { coarseFrames, detectEvents, groundModel, refineFrames, type FootSample } from "./detect.ts";
+import {
+  coarseFrames,
+  detectEvents,
+  groundModel,
+  refineFrames,
+  snapDropTakeoffLanding,
+  type FootSample,
+} from "./detect.ts";
 
 const BOX = 0.7;
 const FLOOR = 0.9;
@@ -170,11 +177,14 @@ describe("detectEvents", () => {
     const result = detectEvents(samples);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.events.takeoff).toBeGreaterThanOrEqual(toeOff - 3);
-    expect(result.events.takeoff).toBeLessThanOrEqual(toeOff + 3);
-    expect(result.events.landing).toBeGreaterThanOrEqual(firstLand - 3);
-    expect(result.events.landing).toBeLessThanOrEqual(firstLand + 3);
-    expect(result.events.landing).toBeLessThan(lateStill - 20);
+    const snapped = snapDropTakeoffLanding(samples, result.model, result.events);
+    // After heel-rise; near true toe-off (not the early heel-only mark).
+    expect(snapped.takeoff).toBeGreaterThan(heelRise + 5);
+    expect(snapped.takeoff).toBeGreaterThanOrEqual(toeOff - 3);
+    expect(snapped.takeoff).toBeLessThanOrEqual(toeOff + 3);
+    expect(snapped.landing).toBeGreaterThanOrEqual(firstLand - 3);
+    expect(snapped.landing).toBeLessThanOrEqual(firstLand + 3);
+    expect(snapped.landing).toBeLessThan(lateStill - 20);
   });
 
   it("finds a mid-drop jump from a hip/knee proxy signal (dark feet)", () => {
