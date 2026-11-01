@@ -1,0 +1,251 @@
+{
+  "mediapipe_lite": {
+    "size_mb": 3.0,
+    "per_frame_ms": null,
+    "safari": "Already ships in app; WASM/GPU path proven on iPhone Safari.",
+    "clips": {
+      "clip0": {
+        "to": true,
+        "ld": true,
+        "flight": true,
+        "height": true,
+        "pass": true,
+        "td_info": "82/112",
+        "det": {
+          "td": 82,
+          "to": 167,
+          "ld": 287,
+          "flight_ms": 692.0,
+          "height_in": 23.09
+        },
+        "gt": {
+          "to": 170,
+          "ld": 290,
+          "flight_ms": 692.1,
+          "height_in": 23.13
+        },
+        "detect_s": 86.4
+      },
+      "clip2": {
+        "to": true,
+        "ld": true,
+        "flight": true,
+        "height": true,
+        "pass": true,
+        "td_info": "86/68",
+        "det": {
+          "td": 86,
+          "to": 125,
+          "ld": 242,
+          "flight_ms": 692.0,
+          "height_in": 23.13
+        },
+        "gt": {
+          "to": 128,
+          "ld": 244,
+          "flight_ms": 683.4,
+          "height_in": 22.55
+        },
+        "detect_s": 130.6
+      },
+      "clip3": {
+        "to": false,
+        "ld": true,
+        "flight": true,
+        "height": false,
+        "pass": false,
+        "td_info": "28/55",
+        "det": {
+          "td": 28,
+          "to": 105,
+          "ld": 227,
+          "flight_ms": 697.0,
+          "height_in": 23.41
+        },
+        "gt": {
+          "to": 112,
+          "ld": 228,
+          "flight_ms": 675.0,
+          "height_in": 22.0
+        },
+        "detect_s": 66.3
+      },
+      "clip4": {
+        "to": true,
+        "ld": false,
+        "flight": false,
+        "height": false,
+        "pass": false,
+        "td_info": "79/62",
+        "det": {
+          "td": 79,
+          "to": 122,
+          "ld": 230,
+          "flight_ms": 633.0,
+          "height_in": 19.36
+        },
+        "gt": {
+          "to": 119,
+          "ld": 235,
+          "flight_ms": 675.5,
+          "height_in": 22.03
+        },
+        "detect_s": 60.2
+      },
+      "clip5": {
+        "to": true,
+        "ld": true,
+        "flight": true,
+        "height": true,
+        "pass": true,
+        "td_info": "14/63",
+        "det": {
+          "td": 14,
+          "to": 120,
+          "ld": 233,
+          "flight_ms": 655.0,
+          "height_in": 20.69
+        },
+        "gt": {
+          "to": 118,
+          "ld": 232,
+          "flight_ms": 658.7,
+          "height_in": 20.95
+        },
+        "detect_s": 80.3
+      }
+    }
+  },
+  "rtmpose": {
+    "size_mb": 53.105777740478516,
+    "per_frame_ms": 146.94396695625431,
+    "safari": "RTMPose+detector pack ~53 MB; ~147 ms/frame CPU (stride sampling). Too heavy for on-device iPhone Safari WASM; would need server or aggressive downsampling. Heel/toe available (BodyWithFeet / Halpe) \u2014 better contact semantics than YOLO ankles.",
+    "clips": {
+      "clip0": {
+        "to": false,
+        "ld": false,
+        "flight": false,
+        "height": false,
+        "pass": false,
+        "td_info": "108/112",
+        "det": {
+          "td": 108,
+          "to": 176,
+          "ld": 276,
+          "flight_ms": 596.2066265060241,
+          "height_in": 17.154993952607796,
+          "plant_ms": 400.2506024096387,
+          "stretch": 3.9974955449597838
+        },
+        "gt": {
+          "to": 170,
+          "ld": 290,
+          "flight_ms": 692.1,
+          "height_in": 23.13
+        },
+        "detect_s": 40.5997498910001,
+        "per_frame_ms": 147.9353081456591
+      },
+      "clip2": {
+        "to": true,
+        "ld": true,
+        "flight": false,
+        "height": false,
+        "pass": false,
+        "td_info": "69/68",
+        "det": {
+          "td": 69,
+          "to": 131,
+          "ld": 243,
+          "flight_ms": 658.3975609756097,
+          "height_in": 20.920564489137686,
+          "plant_ms": 362.5353658536585,
+          "stretch": 4.00360940396059
+        },
+        "gt": {
+          "to": 128,
+          "ld": 244,
+          "flight_ms": 683.4,
+          "height_in": 22.55
+        },
+        "detect_s": 28.748063910999917,
+        "per_frame_ms": 147.64593940932747
+      },
+      "clip3": {
+        "to": false,
+        "ld": true,
+        "flight": false,
+        "height": false,
+        "pass": false,
+        "td_info": "48/55",
+        "det": {
+          "td": 48,
+          "to": 116,
+          "ld": 225,
+          "flight_ms": 629.166666666667,
+          "height_in": 19.10417919622842,
+          "plant_ms": 395.8333333333335,
+          "stretch": 4.003999999999999
+        },
+        "gt": {
+          "to": 112,
+          "ld": 228,
+          "flight_ms": 675.0,
+          "height_in": 22.0
+        },
+        "detect_s": 16.366707542998483,
+        "per_frame_ms": 144.36115924049122
+      },
+      "clip4": {
+        "to": false,
+        "ld": false,
+        "flight": false,
+        "height": false,
+        "pass": false,
+        "td_info": "63/62",
+        "det": {
+          "td": 63,
+          "to": 128,
+          "ld": 228,
+          "flight_ms": 592.1049382716047,
+          "height_in": 16.91976545071993,
+          "plant_ms": 379.4475308641975,
+          "stretch": 3.997039230199852
+        },
+        "gt": {
+          "to": 119,
+          "ld": 235,
+          "flight_ms": 675.5,
+          "height_in": 22.03
+        },
+        "detect_s": 14.731767903998843,
+        "per_frame_ms": 147.03139437334917
+      },
+      "clip5": {
+        "to": false,
+        "ld": false,
+        "flight": false,
+        "height": false,
+        "pass": false,
+        "td_info": "51/63",
+        "det": {
+          "td": 51,
+          "to": 128,
+          "ld": 228,
+          "flight_ms": 591.9962025316456,
+          "height_in": 16.913551639059367,
+          "plant_ms": 441.9126582278481,
+          "stretch": 4.0017711654268515
+        },
+        "gt": {
+          "to": 118,
+          "ld": 232,
+          "flight_ms": 658.7,
+          "height_in": 20.95
+        },
+        "detect_s": 19.224560404007207,
+        "per_frame_ms": 147.74603361244468
+      }
+    }
+  }
+}
