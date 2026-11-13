@@ -3,6 +3,26 @@
     {
       "slowMoFactor": 8,
       "stepOffFrame": 148,
+      "id": "9bd32338-09c9-46df-9c8a-fee0f8f6e556",
+      "createdAt": "2026-11-13T22:28:24.406Z",
+      "fps": 240,
+      "jumpType": "depth",
+      "boxHeightIn": 12,
+      "armSwing": true,
+      "notes": "",
+      "touchdownFrame": 191,
+      "takeoffFrame": 260,
+      "landingFrame": 412,
+      "gctMs": 287.5000000000001,
+      "flightMs": 633.3332499999999,
+      "heightM": 0.49169440532893205,
+      "heightIn": 19.35804745389496,
+      "heightCm": 49.169440532893205,
+      "rsi": 1.7102414098397631
+    },
+    {
+      "slowMoFactor": 8,
+      "stepOffFrame": 148,
       "id": "904db18d-b51b-42d7-9aaf-68d341ed5d25",
       "createdAt": "2026-11-13T18:54:32.118Z",
       "fps": 240,
@@ -402,6 +422,6 @@
       "rsi": 3.362714883643513
     }
   ],
-  "updatedAt": "2026-11-13T22:26:57.569Z",
+  "updatedAt": "2026-11-13T22:28:25.098Z",
   "deletedIds": []
 }
