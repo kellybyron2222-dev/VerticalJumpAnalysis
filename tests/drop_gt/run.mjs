@@ -80,7 +80,7 @@ async function runClip(id) {
   const truth = GT[id];
   if (!truth?.frames) throw new Error(`no GT for ${id}`);
 
-  await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
+  await page.goto(`http://127.0.0.1:${port}/?b=2026-11-21a`, { waitUntil: "load" });
   await page.evaluate(() => {
     for (const el of document.querySelectorAll(
       ".screen, #guide, #screen-box, #screen-master, #screen-profiles",
