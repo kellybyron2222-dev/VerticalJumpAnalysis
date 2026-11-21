@@ -59,6 +59,7 @@ import {
   sloMoStretch,
   stepOffForFall,
 } from "./timing.ts";
+import { gravityStretch, isAmbiguousSloMo } from "./gravityStretch.ts";
 import {
   isBoxHeightPreset,
   loadBoxHeightPref,
@@ -416,6 +417,8 @@ let pendingDeleteId: string | null = null;
 let detecting: AbortController | null = null;
 let factor = readFactor();
 let stretchTouched = false;
+/** Gravity-inferred stretch when Apple slo-mo flag + flat ~30 clock (120 vs 240 ambiguous). */
+let gravityOverride: number | null = null;
 let measuring = false;
 let loadGeneration = 0;
 let measuredUrl: string | null = null;
@@ -1413,6 +1416,7 @@ function loadFile(file: File): void {
   loadGeneration += 1;
   measuring = false;
   stretchTouched = false;
+  gravityOverride = null;
   fpsInput.disabled = false;
   cancelDetect.hidden = true;
   detectStatus.textContent = "";
@@ -1590,6 +1594,7 @@ async function detectCadence(): Promise<void> {
  */
 function activeStretch(): number {
   if (stretchTouched) return factor;
+  if (gravityOverride !== null) return gravityOverride;
   return metricStretch(frameTimes ?? undefined, factor, sloMoHint);
 }
 
@@ -1661,11 +1666,30 @@ async function runDetection(): Promise<void> {
       refreshJumpOverlay();
       return;
     }
+    let metaStretch = stretch;
+    let metaFps = fps;
+    const main0 = result.jumps[0];
+    if (!stretchTouched && main0 && frameTimes && isAmbiguousSloMo(frameTimes, sloMoHint)) {
+      const g = gravityStretch(samples, main0.takeoff, main0.landing, frameTimes);
+      if (g && g.stretch !== stretch) {
+        gravityOverride = g.stretch;
+        metaFps = (fps / stretch) * g.stretch;
+        metaStretch = g.stretch;
+        factor = g.stretch;
+        slowInput.value = String(factor);
+        fpsInput.value = metaFps.toFixed(1);
+        seeker.setFps(metaFps);
+        syncChips();
+        cadenceStatus.textContent = `Capture ~${metaFps.toFixed(0)} fps from the jump's own physics (file did not say 120 or 240). Durations divided by ${g.stretch}×. Tap 8× if you shot 240 fps.`;
+        lastDetectCache.captureFps = metaFps;
+        lastDetectCache.stretch = metaStretch;
+      }
+    }
     applyResolvedJumps(result.jumps, jumpType, {
       lowConfidence: Boolean(result.lowConfidence),
       notes: result.diagnostics.notes ?? [],
-      fps,
-      stretch,
+      fps: metaFps,
+      stretch: metaStretch,
     });
   } catch (error) {
     if (controller.signal.aborted) detectStatus.textContent = "Auto-detect cancelled.";

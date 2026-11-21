@@ -20,6 +20,56 @@ import type { FrameSeeker } from "./seek.ts";
 
 const WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.0/wasm";
 
+/** Cached gamma LUT for dark-clip brightening before pose detect. */
+let exposureLut: Uint8ClampedArray | null = null;
+let exposureLutGamma = -1;
+
+/**
+ * Lift dark frames (mean luma ~75) toward a mid-gray target so MediaPipe sees
+ * feet. No-op when already bright (mean ≥ 95) or near-black (mean < 2).
+ */
+export function normalizeExposure(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): void {
+  if (!(width > 0 && height > 0)) return;
+  let image: ImageData;
+  try {
+    image = context.getImageData(0, 0, width, height);
+  } catch {
+    return;
+  }
+  const data = image.data;
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i + 2 < data.length; i += 64) {
+    sum += 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
+    n += 1;
+  }
+  if (n < 1) return;
+  const mean = sum / n;
+  if (mean >= 95 || mean < 2) return;
+  const target = 115 / 255;
+  const x = mean / 255;
+  if (!(x > 0 && x < 1)) return;
+  const gamma = Math.min(1, Math.max(0.35, Math.log(target) / Math.log(x)));
+  if (exposureLut === null || exposureLutGamma !== gamma) {
+    exposureLut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v += 1) {
+      exposureLut[v] = Math.round(255 * (v / 255) ** gamma);
+    }
+    exposureLutGamma = gamma;
+  }
+  const lut = exposureLut;
+  for (let i = 0; i + 2 < data.length; i += 4) {
+    data[i] = lut[data[i]!]!;
+    data[i + 1] = lut[data[i + 1]!]!;
+    data[i + 2] = lut[data[i + 2]!]!;
+  }
+  context.putImageData(image, 0, 0);
+}
+
 /** Default lite; heavy only when High accuracy is on (lazy-loaded). */
 export type PoseModelQuality = "lite" | "heavy";
 
@@ -389,6 +439,7 @@ async function sampleFrames(
     const frame = frames[i]!;
     await seeker.settle(frame);
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    normalizeExposure(context, canvas.width, canvas.height);
     const result = landmarker.detect(canvas);
     const picked = pickBestPose(result.landmarks ?? [], lastCentroid);
     if (picked) {
